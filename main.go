@@ -16,6 +16,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	psh "github.com/platformsh/gohelper"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
@@ -68,6 +69,13 @@ func main() {
 	logrus.SetLevel(logrus.TraceLevel)
 	logrus.Tracef("The start")
 
+	var err error
+
+	platform, err := psh.NewPlatformInfo()
+	if err != nil {
+		panic("Not in a Platform.sh Environment.")
+	}
+
 	var genres genres
 	{
 		data, err := ioutil.ReadFile("./genres.json")
@@ -82,15 +90,10 @@ func main() {
 		}
 	}
 
-	var err error
-
-	dbstring := fmt.Sprintf(
-		"host=%v port=5432 user=%v dbname=%v sslmode=disable password=%v",
-		os.Getenv("DB_HOST"),
-		os.Getenv("DB_USER"),
-		os.Getenv("DB_NAME"),
-		os.Getenv("DB_PASS"),
-	)
+	dbstring, err := platform.SqlDsn("postgresdatabase")
+	if err != nil {
+		logrus.Fatalf("Failed to get Platform db string")
+	}
 	db, err := sqlx.Connect("postgres", dbstring)
 	if err != nil {
 		logrus.Fatalf("Failed to open [%v]: %+v", dbstring, err)
@@ -333,7 +336,7 @@ func main() {
 		})
 	})
 
-	err = http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(platform.Port, nil)
 	if err != nil {
 		logrus.Errorf("Http server exited with error", err)
 	}
