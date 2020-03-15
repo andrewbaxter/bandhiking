@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "idb": "^5.0.1",
+    "laconic": "^0.2.2"
+  }
+}
