@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jeffail/gabs/v2"
@@ -124,11 +125,17 @@ func main() {
 		// Handle errors!
 	}
 
+	isScraping := struct {
+		scraping int32
+	}{
+		scraping: 0,
+	}
+
 	myhttp := resty.New()
 	myhttp.SetRetryCount(3)
-	scrape := func() {
+	scrapeInner := func() {
 		date := time.Now()
-		logrus.Tracef("Scraping, %v", date)
+		logrus.Tracef("Starting scrape, %v", date)
 
 		rankpage := func(url string, rank int, sort string, topcat string, subcat string) int {
 			logrus.Tracef("Fetching %v", url)
@@ -246,13 +253,25 @@ func main() {
 			}
 		}
 	}
+	scrape := func() {
+		if !atomic.CompareAndSwapInt32(&isScraping.scraping, 0, 1) {
+			logrus.Infof("New scrape aborted; already scraping")
+			return
+		}
+		scrapeInner()
+		atomic.StoreInt32(&isScraping.scraping, 0)
+	}
 	mycron := cron.New()
-	mycron.AddFunc("@daily", scrape)
+	mycron.AddFunc("@every 24h", scrape)
 	mycron.Start()
-	go scrape()
+	//go scrape()
 
 	static := http.FileServer(http.Dir("./static"))
 	http.Handle("/", static)
+
+	http.HandleFunc("/scrape", func(w http.ResponseWriter, req *http.Request) {
+		go scrape()
+	})
 
 	http.HandleFunc("/api/genres", func(w http.ResponseWriter, req *http.Request) {
 		bytes, err := json.Marshal(genres)
