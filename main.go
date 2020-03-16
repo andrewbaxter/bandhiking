@@ -17,7 +17,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	psh "github.com/platformsh/config-reader-go/v2"
-	"github.com/platformsh/config-reader-go/v2/sqldsn"
+	pshsql "github.com/platformsh/config-reader-go/v2/libpq"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
@@ -95,7 +95,7 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to get Platform db credentials string: %v", err)
 	}
-	dbstring, err := sqldsn.FormattedCredentials(dbstring0)
+	dbstring, err := pshsql.FormattedCredentials(dbstring0)
 	if err != nil {
 		logrus.Fatalf("Failed to format Platform db credentials string: %v", err)
 	}
