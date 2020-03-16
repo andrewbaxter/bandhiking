@@ -29,7 +29,8 @@ relationships:
 
 
 hooks:
-  build: ./build.sh
+  build: |
+    ./build.sh
 
 web:
   upstream:
