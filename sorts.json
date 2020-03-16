@@ -1,0 +1,5 @@
+[
+  { "value": "top", "name": "best-selling" },
+  { "value": "new", "name": "new arrivals" },
+  { "value": "rec", "name": "artist-recommended" }
+]

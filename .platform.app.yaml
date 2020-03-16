@@ -29,7 +29,7 @@ relationships:
 
 
 hooks:
-  build: go build -o bin/app
+  build: ./build.sh
 
 web:
   upstream:

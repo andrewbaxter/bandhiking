@@ -24,6 +24,13 @@ import (
 	"golang.org/x/net/html"
 )
 
+type sorts []sort
+
+type sort struct {
+	Value string `json:"value"`
+	Name  string `json:"name"`
+}
+
 type genres []genre
 
 type genre struct {
@@ -50,11 +57,8 @@ func searchAttr(vals *[]html.Attribute, test func(v *html.Attribute) bool) *html
 }
 
 type track struct {
-	TrackID int64  `json:"trackId"`
-	ArtURL  string `json:"artUrl"`
-	URL     string `json:"url"`
-	Name    string `json:"name"`
-	Artist  string `json:"artist"`
+	ID   int64  `json:"id"`
+	Blob string `json:"json"`
 }
 
 type genreRank struct {
@@ -73,11 +77,44 @@ func main() {
 
 	var err error
 
+	var dbstring string
+	var listenstring string
+
 	platform, err := psh.NewRuntimeConfig()
-	if err != nil {
-		panic("Not in a Platform.sh Environment.")
+	if err == nil {
+		listenstring = ":" + platform.Port()
+		dbstring0, err := platform.Credentials("postgresdatabase")
+		if err != nil {
+			logrus.Fatalf("Failed to get Platform db credentials string: %v", err)
+		}
+		dbstring, err = pshsql.FormattedCredentials(dbstring0)
+		if err != nil {
+			logrus.Fatalf("Failed to format Platform db credentials string: %v", err)
+		}
+	} else {
+		listenstring = ":8080"
+		dbstring = fmt.Sprintf(
+			"host=%v port=5432 user=%v dbname=%v sslmode=disable password=%v",
+			os.Getenv("DB_HOST"),
+			os.Getenv("DB_USER"),
+			os.Getenv("DB_NAME"),
+			os.Getenv("DB_PASS"),
+		)
 	}
 
+	var sorts sorts
+	{
+		data, err := ioutil.ReadFile("./sorts.json")
+		if err != nil {
+			logrus.Fatalf("Failed to load sorts file", err)
+			return
+		}
+		err = json.Unmarshal(data, &sorts)
+		if err != nil {
+			logrus.Fatalf("Couldn't parse json from sorts file")
+			return
+		}
+	}
 	var genres genres
 	{
 		data, err := ioutil.ReadFile("./genres.json")
@@ -92,14 +129,6 @@ func main() {
 		}
 	}
 
-	dbstring0, err := platform.Credentials("postgresdatabase")
-	if err != nil {
-		logrus.Fatalf("Failed to get Platform db credentials string: %v", err)
-	}
-	dbstring, err := pshsql.FormattedCredentials(dbstring0)
-	if err != nil {
-		logrus.Fatalf("Failed to format Platform db credentials string: %v", err)
-	}
 	db, err := sqlx.Connect("postgres", dbstring)
 	if err != nil {
 		logrus.Fatalf("Failed to open [%v]: %+v", dbstring, err)
@@ -111,7 +140,7 @@ func main() {
 			&migrate.Migration{
 				Id: "001",
 				Up: []string{
-					"create table track (trackId bigint primary key, artUrl text, url text, name text, artist text)",
+					"create table track (id bigint primary key, blob json)",
 					"create table genreRank (date timestamp, \"primary\" text, secondary text, sort text, rank integer, track bigint, primary key (\"primary\", secondary, sort, date, rank))",
 				},
 				Down: []string{"DROP TABLE track", "DROP TABLE genreRank"},
@@ -122,7 +151,6 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to migrate db: %+v", err)
 		return
-		// Handle errors!
 	}
 
 	isScraping := struct {
@@ -150,70 +178,42 @@ func main() {
 				return rank
 			}
 			for _, trackdata := range data.Search("items").Children() {
+				bytes, err := trackdata.MarshalJSON()
+				if err != nil {
+					logrus.Fatalf("Failed to reencode json, shouldn't happen; %+v", err)
+				}
 				_type := trackdata.S("type").Data().(string)
 				if _type != "a" {
-					bytes, err := trackdata.MarshalJSON()
-					if err != nil {
-						logrus.Fatalf("Failed to reencode json, shouldn't happen; %+v", err)
-					}
 					logrus.Infof("Unhandled item type %v: %v", _type, string(bytes))
 					continue
 				}
-				trackID := trackdata.Search("featured_track", "id").Data()
-				artID := trackdata.Search("id").Data()
-				name := trackdata.Search("primary_text").Data()
-				artist := trackdata.Search("secondary_text").Data()
-				urlSubdomain := trackdata.S("url_hints", "subdomain").Data()
-				urlSlug := trackdata.S("url_hints", "slug").Data()
-				if trackID == nil || artID == nil || name == nil || artist == nil || urlSubdomain == nil ||
-					urlSlug == nil {
+				trackID0 := trackdata.Search("featured_track", "id").Data()
+				if trackID0 == nil {
 					logrus.Errorf("Failed to extract expected data from track: %+v", trackdata)
 					continue
 				}
-				artURL := fmt.Sprintf(
-					"https://f4.bcbits.com/img/%v%v_42.jpg",
-					_type,
-					int64(artID.(float64)),
-				)
-				url := fmt.Sprintf(
-					"https://%v.bandcamp.com/album/%v",
-					urlSubdomain,
-					urlSlug,
-				)
-				track0 := track{
-					TrackID: int64(trackID.(float64)),
-					ArtURL:  artURL,
-					URL:     url,
-					Name:    name.(string),
-					Artist:  artist.(string),
-				}
-				rows, err := db.Query(
-					"insert into track (trackId, artUrl, url, name, artist) values ($1, $2, $3, $4, $5) on conflict (trackId) do nothing returning 1",
-					int64(trackID.(float64)),
-					artURL,
-					url,
-					name,
-					artist,
+				trackID := int64(trackID0.(float64))
+				_, err = db.Exec(
+					"insert into track (id, blob) values ($1, $2) on conflict (id) do nothing",
+					trackID,
+					bytes,
 				)
 				if err != nil {
 					logrus.Errorf("Failed to create track record; %+v", err)
 					return -1
 				}
-				defer rows.Close()
-				if rows.Next() {
-					_, err = db.Exec(
-						"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6)",
-						date,
-						topcat,
-						subcat,
-						sort,
-						int32(rank),
-						track0.TrackID,
-					)
-					if err != nil {
-						logrus.Errorf("Failed to create track rank record; %+v", err)
-						return -1
-					}
+				_, err = db.Exec(
+					"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6) on conflict (\"primary\", secondary, sort, date, rank) do nothing",
+					date,
+					topcat,
+					subcat,
+					sort,
+					int32(rank),
+					trackID,
+				)
+				if err != nil {
+					logrus.Errorf("Failed to create track rank record; %+v", err)
+					return -1
 				}
 				rank++
 			}
@@ -224,12 +224,12 @@ func main() {
 			for _, topcat := range genres {
 				{
 					rank := 0
-					for i := 0; i < 20; i++ {
+					for page := 0; page < 20; page++ {
 						url := fmt.Sprintf(
 							"https://bandcamp.com/api/discover/3/get_web?g=%v&s=%v&p=%v&gn=0&f=all&w=0",
 							topcat.Value,
 							sort,
-							i,
+							page,
 						)
 						rank = rankpage(url, rank, sort, topcat.Value, "all")
 						time.Sleep(30 * time.Second)
@@ -238,13 +238,13 @@ func main() {
 				time.Sleep(30 * time.Second)
 				for _, subcat := range topcat.Sub {
 					rank := 0
-					for i := 0; i < 20; i++ {
+					for page := 0; page < 20; page++ {
 						url := fmt.Sprintf(
 							"https://bandcamp.com/api/discover/3/get_web?g=%v&t=%v&s=%v&p=%v&gn=0&f=all&w=0",
 							topcat.Value,
 							subcat.Value,
 							sort,
-							i,
+							page,
 						)
 						rank = rankpage(url, rank, sort, topcat.Value, subcat.Value)
 						time.Sleep(30 * time.Second)
@@ -264,7 +264,6 @@ func main() {
 	mycron := cron.New()
 	mycron.AddFunc("@every 24h", scrape)
 	mycron.Start()
-	//go scrape()
 
 	static := http.FileServer(http.Dir("./static"))
 	http.Handle("/", static)
@@ -273,15 +272,57 @@ func main() {
 		go scrape()
 	})
 
+	RetJSON := func(w http.ResponseWriter, v interface{}) {
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(200)
+		b, err := json.Marshal(v)
+		if err != nil {
+			logrus.Errorf("Failed to serialize error; %+v", err)
+		}
+		_, err = w.Write(b)
+		if err != nil {
+			logrus.Warnf("Failed to write json bytes; %+v", err)
+		}
+	}
+
+	http.HandleFunc("/api/sorts", func(w http.ResponseWriter, req *http.Request) {
+		RetJSON(w, sorts)
+	})
+
 	http.HandleFunc("/api/genres", func(w http.ResponseWriter, req *http.Request) {
-		bytes, err := json.Marshal(genres)
-		if err != nil {
-			logrus.Errorf("Failed to serialize genres; %+v", err)
+		RetJSON(w, genres)
+	})
+
+	embedPrefix := "/api/embed/"
+	http.HandleFunc(embedPrefix, func(w http.ResponseWriter, req *http.Request) {
+		path := strings.TrimPrefix(req.URL.Path, embedPrefix)
+		keys := strings.Split(path, "~~~")
+		if len(keys) == 1 {
+			logrus.Errorf("Trying to proxy non-html", req.URL)
+			w.WriteHeader(400)
+			return
 		}
-		_, err = w.Write(bytes)
+		album, track := keys[0], keys[1]
+		url := fmt.Sprintf(
+			"https://bandcamp.com/EmbeddedPlayer/album=%v/size=large/bgcol=ffffff/linkcol=0687f5/tracklist=false/track=%v/transparent=true/",
+			album,
+			track,
+		)
+		res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
 		if err != nil {
-			logrus.Errorf("Failed to write genre json bytes; %+v", err)
+			logrus.Errorf("Failed to request page %v; %+v", url, err)
+			w.WriteHeader(500)
+			return
 		}
+		w.WriteHeader(200)
+		w.Header().Add("Content-Type", "text/html")
+		bytes, err := ioutil.ReadAll(res.RawBody())
+		if err != nil {
+			logrus.Errorf("Failed to request page %v; %+v", url, err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Write(bytes)
 	})
 
 	http.HandleFunc("/api/genrerank/", func(w http.ResponseWriter, req *http.Request) {
@@ -289,20 +330,8 @@ func main() {
 		type ErrorRet struct {
 			Error string `json:"error"`
 		}
-		RetJSON := func(v interface{}) {
-			w.Header().Add("Content-Type", "application/json")
-			w.WriteHeader(200)
-			b, err := json.Marshal(v)
-			if err != nil {
-				logrus.Errorf("Failed to serialize error; %+v", err)
-			}
-			_, err = w.Write(b)
-			if err != nil {
-				logrus.Warnf("Failed to write json bytes; %+v", err)
-			}
-		}
 		RetE := func(e string) {
-			RetJSON(ErrorRet{
+			RetJSON(w, ErrorRet{
 				Error: e,
 			})
 		}
@@ -316,7 +345,6 @@ func main() {
 			return
 		}
 		sort, topcat, subcat := splits[0], splits[1], splits[2]
-		logrus.Printf("query %v %v %v", sort, topcat, subcat)
 		page := 0
 		if len(splits) == 4 {
 			got, err := strconv.Atoi(splits[3])
@@ -326,7 +354,7 @@ func main() {
 		}
 		pagesize := 100
 		rows, err := db.Queryx(
-			"select track.* from genreRank left join track on genreRank.track = track.trackId where sort = $1 and \"primary\" = $2 and secondary = $3 order by date desc, rank desc offset $4 limit $5",
+			"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 and secondary = $3 order by date desc, rank desc offset $4 limit $5",
 			sort,
 			topcat,
 			subcat,
@@ -354,13 +382,13 @@ func main() {
 		if len(tracks) < pagesize {
 			nextpage = 0
 		}
-		RetJSON(TracksRet{
+		RetJSON(w, TracksRet{
 			Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v", sort, topcat, subcat, nextpage),
 			Tracks: tracks,
 		})
 	})
 
-	err = http.ListenAndServe(":"+platform.Port(), nil)
+	err = http.ListenAndServe(listenstring, nil)
 	if err != nil {
 		logrus.Errorf("Http server exited with error", err)
 	}

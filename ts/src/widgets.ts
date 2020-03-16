@@ -1,11 +1,11 @@
-import { ChainAnchor, Listener, event, ChainSource } from "./chain";
+import { ChainAnchor, Listener, event, bindEvent } from "./chain";
 
 export interface Widget {
   getDOM(): Element;
   destroy(): void;
 }
 
-class EWidget implements Widget {
+export class EWidget implements Widget {
   w: Element;
   constructor(w: Element) {
     this.w = w;
@@ -33,11 +33,11 @@ class ContainerWidget implements Widget {
     return this.w;
   }
   destroy(): void {
-    for (let child of this.children) child.destroy();
+    for (const child of this.children) child.destroy();
   }
 }
 
-export const wroot = (widget: Widget) => {
+export const wroot = (widget: Widget): void => {
   document.getElementById("root")!.replaceWith(widget.getDOM());
 };
 
@@ -52,17 +52,21 @@ export class WTab implements Widget {
   dom: Element;
   builder: () => Widget;
   widget: Widget | null;
+  keep: boolean;
   constructor({
     icon = null,
     text,
     labelMode = LabelMode.SHORT,
+    keep = false,
     builder
   }: {
     icon?: string | null;
     text: string;
+    keep?: boolean;
     labelMode?: LabelMode;
     builder: () => Widget;
   }) {
+    this.keep = keep;
     const constructIcon = (): Element => {
       const dom0 = document.createElement("img");
       dom0.src = icon!;
@@ -74,20 +78,21 @@ export class WTab implements Widget {
       dom0.textContent = text;
       return dom0;
     };
+    this.dom = div();
     switch (labelMode) {
       case LabelMode.SHORT: {
-        if (icon !== null) this.dom = constructIcon();
-        else this.dom = constructText();
+        if (icon !== null) this.dom.append(constructIcon());
+        else this.dom.append(constructText());
         break;
       }
       case LabelMode.ICON: {
         if (icon === null)
           throw new Error("Internal error: missing icon for mode");
-        this.dom = constructIcon();
+        this.dom.append(constructIcon());
         break;
       }
       case LabelMode.TEXT: {
-        this.dom = constructText();
+        this.dom.append(constructText());
         break;
       }
       case LabelMode.ICONTEXT: {
@@ -97,31 +102,38 @@ export class WTab implements Widget {
         icon0.src = icon;
         const text0 = div();
         text0.textContent = text;
-        const dom0 = hdiv();
-        dom0.append(icon0, text0);
-        this.dom = dom0;
+        this.dom.append(icon0, text0);
         break;
       }
     }
-    this.dom.classList.add("w.tab");
+    this.dom.classList.add("w_tab");
     this.builder = builder;
     this.widget = null;
   }
+
   getDOM(): Element {
     return this.dom;
   }
-  getBodyDOM(): Element {
+
+  getBodyDOM(): Element | null {
     if (this.widget === null) {
       this.widget = this.builder();
+      return this.widget.getDOM();
+    } else {
+      (this.widget.getDOM() as HTMLElement).style.display = "";
+      return null;
     }
-    return this.widget.getDOM();
   }
 
   destroyBody(): void {
     if (this.widget !== null) {
-      this.widget.getDOM().remove();
-      this.widget.destroy();
-      this.widget = null;
+      if (this.keep) {
+        (this.widget.getDOM() as HTMLElement).style.display = "none";
+      } else {
+        this.widget.getDOM().remove();
+        this.widget.destroy();
+        this.widget = null;
+      }
     }
   }
   destroy(): void {
@@ -131,7 +143,7 @@ export class WTab implements Widget {
   }
 }
 
-const isWTab = (v: any): v is WTab => {
+const isWTab = (v: Widget): v is WTab => {
   return "getBodyDOM" in v;
 };
 
@@ -143,23 +155,29 @@ export class WTabs implements Widget {
     this.div = vdiv();
     this.div.classList.add("w_tabs");
     const tabsHeader = hdiv();
+    tabsHeader.classList.add("w_tabheader");
     const tabsBody = vdiv();
+    tabsBody.classList.add("w_tabbody");
     this.div.append(tabsHeader, tabsBody);
     this.tabs = tabs;
     const select = async (tab: WTab): Promise<void> => {
       if (this.selected === tab) return;
       if (this.selected !== null) {
+        this.selected.getDOM().classList.remove("w_selected");
         this.selected.destroyBody();
       }
       this.selected = tab;
-      tabsBody.append(tab.getBodyDOM());
+      this.selected.getDOM().classList.add("w_selected");
+      const bodyDOM = tab.getBodyDOM(); // Null means already present, hidden
+      if (bodyDOM !== null) tabsBody.append(bodyDOM);
     };
     let firstTab: WTab | null = null;
     for (const tab of tabs) {
       const dom = tab.getDOM();
       if (isWTab(tab)) {
         if (firstTab === null) firstTab = tab;
-        dom.addEventListener("click", e =>
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises
+        dom.addEventListener("click", _ =>
           event(async () => {
             await select(tab);
           })
@@ -168,7 +186,9 @@ export class WTabs implements Widget {
       tabsHeader.append(dom);
     }
     this.selected = null;
-    if (firstTab !== null) select(firstTab);
+    if (firstTab !== null)
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      select(firstTab);
   }
   getDOM(): Element {
     return this.div;
@@ -198,58 +218,67 @@ export const vdiv = (...nodes: Element[]): HTMLDivElement => {
   return out;
 };
 
-export const wvbox = (...nodes: Widget[]) => {
+export const wvbox = (...nodes: Widget[]): Widget => {
   return new ContainerWidget("div", "w_vbox", ...nodes);
 };
 
-export const whbox = (...nodes: Widget[]) => {
+export const whbox = (...nodes: Widget[]): Widget => {
   return new ContainerWidget("div", "w_hbox", ...nodes);
 };
 
-export const wslider = ({
-  icon = null,
-  min,
-  max,
-  step,
-  text,
-  bind
-}: {
-  icon?: string | null;
-  min: number;
-  max: number;
-  step: number;
-  text: string;
+export class WSlider implements Widget {
+  dom: Element;
+  bindListener: Listener<number>;
   bind: ChainAnchor<number>;
-}): Widget => {
-  const input = document.createElement("input");
-  input.type = "range";
-  input.min = "" + min;
-  input.max = "" + max;
-  input.step = "" + step;
-  new (class extends Listener<number> {
-    async do(v: number) {
-      input.value = "" + v;
+  constructor({
+    icon = null,
+    min,
+    max,
+    step,
+    text,
+    bind
+  }: {
+    icon?: string | null;
+    min: number;
+    max: number;
+    step: number;
+    text: string;
+    bind: ChainAnchor<number>;
+  }) {
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "" + min;
+    input.max = "" + max;
+    input.step = "" + step;
+    this.bindListener = new (class extends Listener<number> {
+      async do(v: number): Promise<void> {
+        input.value = "" + v;
+      }
+    })(text, bind);
+    this.bind = bind;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    bindEvent(input, "input", async _ => {
+      bind.set(parseFloat(input.value));
+    });
+    if (icon !== null) {
+      const image = document.createElement("img");
+      image.src = icon;
+      image.alt = text;
+      this.dom = hdiv(image, input);
+    } else {
+      const label = document.createElement("label");
+      label.textContent = text;
+      this.dom = hdiv(label, input);
     }
-  })(bind);
-  input.addEventListener("input", e =>
-    event(async () => {
-      await bind.set(parseFloat(input.value));
-    })
-  );
-  let out: Element;
-  if (icon !== null) {
-    const image = document.createElement("img");
-    image.src = icon;
-    image.alt = text;
-    out = hdiv(image, input);
-  } else {
-    const label = document.createElement("label");
-    label.textContent = text;
-    out = hdiv(label, input);
+    this.dom.classList.add("w_slider");
   }
-  out.classList.add("w_slider");
-  return new EWidget(out);
-};
+  getDOM(): Element {
+    return this.dom;
+  }
+  destroy(): void {
+    this.bind.dests.delete(this.bindListener);
+  }
+}
 
 export const wbutton = ({
   icon = null,
@@ -270,49 +299,55 @@ export const wbutton = ({
     out = div();
     out.textContent = text;
   }
-  out.addEventListener("click", e => {
-    event(action);
-  });
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  bindEvent(out, "click", _ => action());
   out.classList.add("w_button");
   return new EWidget(out);
 };
 
-export const wtoggleButton = ({
-  klass,
-  text,
-  bind
-}: {
-  klass: string;
-  text: string;
+export class WToggleButton implements Widget {
+  bindListener: Listener<boolean>;
+  dom: HTMLDivElement;
   bind: ChainAnchor<boolean>;
-}): Widget => {
-  const text0 = div();
-  text0.textContent = text;
-  const check = document.createElement("input");
-  check.type = "check";
-  check.alt = text;
-  new (class extends Listener<boolean> {
-    async do(v: boolean) {
-      check.checked = v;
-    }
-  })(bind);
-  check.addEventListener("toggle", e =>
-    event(async () => {
-      await bind.set(check.checked);
-    })
-  );
-  const out = hdiv(check, text0);
-  out.classList.add("w_toggle");
-  out.classList.add(klass);
-  return new EWidget(out);
-};
+  constructor({
+    klass,
+    text,
+    bind
+  }: {
+    klass: string;
+    text: string;
+    bind: ChainAnchor<boolean>;
+  }) {
+    const text0 = div();
+    text0.textContent = text;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.alt = text;
+    this.bindListener = new (class extends Listener<boolean> {
+      async do(v: boolean): Promise<void> {
+        check.checked = v;
+      }
+    })(klass, bind);
+    this.bind = bind;
+    bindEvent(check, "change", async _ => {
+      bind.set(check.checked);
+    });
+    this.dom = hdiv(check, text0);
+    this.dom.classList.add("w_toggle");
+    this.dom.classList.add(klass);
+  }
+
+  getDOM(): Element {
+    return this.dom;
+  }
+
+  destroy(): void {
+    this.bind.dests.delete(this.bindListener);
+  }
+}
 
 export interface DataSource<T> {
   get(start: number, count: number): Promise<T[]>;
-}
-
-export class DataSource<T> {
-  constructor(source: string) {}
 }
 
 type ListElement = {
@@ -326,7 +361,7 @@ export class WBindList<T> implements Widget {
   // Up to 2X before/after offscreen
   elements: ListElement[];
   div: HTMLDivElement;
-  resizeListener: (e: any) => void;
+  resizeListener: (e: Event) => void;
   constructor({
     source,
     create
@@ -336,9 +371,9 @@ export class WBindList<T> implements Widget {
   }) {
     this.div = div();
     this.div.classList.add("w_list");
-    this.div.style.overflowY = "scroll";
+    this.div.style.overflowY = "auto";
     this.elements = [];
-    const update = async (isRetry: boolean) => {
+    const update = async (isRetry: boolean): Promise<void> => {
       const box = this.div.getBoundingClientRect();
       let firstVisibleIndex = 0;
       let firstVisible: [ListElement, DOMRect] | null = null;
@@ -346,7 +381,7 @@ export class WBindList<T> implements Widget {
       for (const e of this.elements) {
         const ebox = e.w.getDOM().getBoundingClientRect();
         if (ebox.bottom < box.top) continue;
-        if (firstVisible == null) {
+        if (firstVisible === null) {
           firstVisible = [e, ebox];
           firstVisibleIndex = e.index;
         }
@@ -354,7 +389,7 @@ export class WBindList<T> implements Widget {
         if (ebox.top > box.bottom) break;
       }
       let basecount = 30;
-      if (firstVisible != null) {
+      if (firstVisible !== null) {
         lastVisible = lastVisible!; // firstVisible -> lastVisible
         const usedCount = lastVisible[0].index - firstVisible[0].index;
         const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
@@ -362,6 +397,7 @@ export class WBindList<T> implements Widget {
         basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
       } else if (!isRetry) {
         setTimeout(
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises
           () =>
             event(async () => {
               await update(true);
@@ -406,9 +442,10 @@ export class WBindList<T> implements Widget {
         this.elements.splice(dstart, count);
       };
 
-      const firstIndex = this.elements.length == 0 ? 0 : this.elements[0].index;
+      const firstIndex =
+        this.elements.length === 0 ? 0 : this.elements[0].index;
       const lastIndex =
-        this.elements.length == 0
+        this.elements.length === 0
           ? 0
           : this.elements[this.elements.length - 1].index;
       const needBeforeStart = Math.max(0, firstVisibleIndex - basecount);
@@ -430,16 +467,16 @@ export class WBindList<T> implements Widget {
     };
     window.addEventListener(
       "resize",
-      (this.resizeListener = e =>
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (this.resizeListener = (_): Promise<void> =>
         event(async () => {
           await update(false);
         }))
     );
-    this.div.addEventListener("scroll", e =>
-      event(async () => {
-        await update(false);
-      })
-    );
+    bindEvent(this.div, "scroll", async _ => {
+      await update(false);
+    });
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     update(false);
   }
   getDOM(): Element {

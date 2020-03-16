@@ -6,6 +6,7 @@
     "target": "ES2018",
     "downlevelIteration": true,
     "moduleResolution": "Node",
-    "strict": true
+    "strict": true,
+    "noImplicitAny": true
   }
 }

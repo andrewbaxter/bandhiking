@@ -5,22 +5,25 @@ export const depthFirst = async <T extends unknown>(
   f: (v: T) => Promise<Iterator<T> | typeof abort>
 ): Promise<void | typeof abort> => {
   const stack = [];
-  for (let v of x) {
+  for (const v of x) {
     const add0 = await f(v);
-    if (add0 == abort) return abort;
-    const add = add0 as Iterator<T>;
+    if (add0 === abort) return abort;
+    const add = add0;
     stack.push(add);
   }
   stack.reverse();
   while (stack.length > 0) {
-    const { done, value } = await stack[stack.length - 1].next();
+    const { done, value } = stack[stack.length - 1].next() as {
+      done: boolean | undefined;
+      value: T;
+    };
     if (done) {
       stack.splice(stack.length - 1, 1);
       continue;
     }
     const out0 = await f(value);
-    if (out0 == abort) return abort;
-    const out = out0 as Iterator<T>;
+    if (out0 === abort) return abort;
+    const out = out0;
     stack.push(out);
   }
 };
