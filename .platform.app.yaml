@@ -30,7 +30,7 @@ relationships:
 
 hooks:
   build: |
-    ./build.sh
+    bash ./build.sh
 
 web:
   upstream:
