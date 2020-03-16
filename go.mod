@@ -4,15 +4,16 @@ go 1.13
 
 require (
 	github.com/Jeffail/gabs/v2 v2.4.0
-	github.com/Masterminds/squirrel v1.2.0
-	github.com/andybalholm/cascadia v1.1.0
+	github.com/Masterminds/squirrel v1.2.0 // indirect
+	github.com/andybalholm/cascadia v1.1.0 // indirect
 	github.com/ddliu/go-httpclient v0.6.6 // indirect
 	github.com/ericchiang/css v0.0.0-20171210184639-f08e94f04ef6 // indirect
 	github.com/go-resty/resty/v2 v2.2.0
-	github.com/jinzhu/gorm v1.9.12
+	github.com/jinzhu/gorm v1.9.12 // indirect
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/lib/pq v1.2.0
 	github.com/mattn/go-colorable v0.1.6 // indirect
+	github.com/platformsh/config-reader-go/v2 v2.3.1
 	github.com/platformsh/gohelper v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0
 	github.com/robfig/cron/v3 v3.0.0 // indirect

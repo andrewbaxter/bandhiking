@@ -16,7 +16,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	psh "github.com/platformsh/gohelper"
+	psh "github.com/platformsh/config-reader-go/v2"
+	"github.com/platformsh/config-reader-go/v2/sqldsn"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
@@ -71,7 +72,7 @@ func main() {
 
 	var err error
 
-	platform, err := psh.NewPlatformInfo()
+	platform, err := psh.NewRuntimeConfig()
 	if err != nil {
 		panic("Not in a Platform.sh Environment.")
 	}
@@ -90,9 +91,13 @@ func main() {
 		}
 	}
 
-	dbstring, err := platform.SqlDsn("postgresdatabase")
+	dbstring0, err := platform.Credentials("postgresdatabase")
 	if err != nil {
-		logrus.Fatalf("Failed to get Platform db string")
+		logrus.Fatalf("Failed to get Platform db credentials string: %v", err)
+	}
+	dbstring, err := sqldsn.FormattedCredentials(dbstring0)
+	if err != nil {
+		logrus.Fatalf("Failed to format Platform db credentials string: %v", err)
 	}
 	db, err := sqlx.Connect("postgres", dbstring)
 	if err != nil {
@@ -336,7 +341,7 @@ func main() {
 		})
 	})
 
-	err = http.ListenAndServe(platform.Port, nil)
+	err = http.ListenAndServe(":"+platform.Port(), nil)
 	if err != nil {
 		logrus.Errorf("Http server exited with error", err)
 	}
