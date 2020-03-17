@@ -1,4 +1,4 @@
-import { ChainAnchor, Listener, event, bindEvent } from "./chain";
+import { ChainAnchor, Listener, event, bindEvent, ChainSource } from "./chain";
 
 export interface Widget {
   getDOM(): Element;
@@ -38,7 +38,7 @@ class ContainerWidget implements Widget {
 }
 
 export const wroot = (widget: Widget): void => {
-  document.getElementById("root")!.replaceWith(widget.getDOM());
+  document.body.append(widget.getDOM());
 };
 
 enum LabelMode {
@@ -259,15 +259,17 @@ export class WSlider implements Widget {
     input.min = "" + min;
     input.max = "" + max;
     input.step = "" + step;
-    this.bindListener = new (class extends Listener<number> {
-      async do(v: number): Promise<void> {
+    this.bindListener = new Listener<number>(
+      text,
+      bind,
+      async (v: number): Promise<void> => {
         input.value = "" + v;
       }
-    })(text, bind);
+    );
     this.bind = bind;
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     bindEvent(input, "input", async _ => {
-      bind.set(parseFloat(input.value));
+      await bind.set(parseFloat(input.value));
     });
     if (icon !== null) {
       const image = document.createElement("img");
@@ -332,14 +334,16 @@ export class WToggleButton implements Widget {
     const check = document.createElement("input");
     check.type = "checkbox";
     check.alt = text;
-    this.bindListener = new (class extends Listener<boolean> {
-      async do(v: boolean): Promise<void> {
+    this.bindListener = new Listener<boolean>(
+      klass,
+      bind,
+      async (v: boolean): Promise<void> => {
         check.checked = v;
       }
-    })(klass, bind);
+    );
     this.bind = bind;
     bindEvent(check, "change", async _ => {
-      bind.set(check.checked);
+      await bind.set(check.checked);
     });
     this.dom = hdiv(check, text0);
     this.dom.classList.add("w_toggle");
@@ -363,6 +367,37 @@ type ListElement = {
   index: number;
   w: Widget;
 };
+
+export const wtext = (text: string): Widget => {
+  const out = div();
+  out.textContent = text;
+  out.classList.add("w_text");
+  return new EWidget(out);
+};
+
+export class WBindText<T> implements Widget {
+  dom: HTMLDivElement;
+  bind: ChainSource<T>;
+  bindListener: Listener<T>;
+  constructor(comment: string, text: ChainSource<T>, format: (t: T) => string) {
+    this.dom = div();
+    this.dom.classList.add("w_text");
+    this.bind = text;
+    this.bindListener = new Listener<T>(
+      comment,
+      text,
+      async (v: T): Promise<void> => {
+        this.dom.textContent = format(v);
+      }
+    );
+  }
+  getDOM(): Element {
+    return this.dom;
+  }
+  destroy(): void {
+    this.bind.dests.delete(this.bindListener);
+  }
+}
 
 export const wbindList = async <T>({
   source,
@@ -515,20 +550,57 @@ class WBindList<T> implements Widget {
 }
 
 export class WDetailLevel implements Widget {
-  dom: HTMLDetailsElement;
   children: Widget[];
-  constructor(title: string, ...children: Widget[]) {
-    this.dom = document.createElement("details");
-    const summ = document.createElement("summary");
+  openBind: ChainAnchor<boolean> | null;
+  openListener: Listener<boolean> | null;
+  dom: HTMLDivElement;
+  constructor({
+    title,
+    open = false,
+    children
+  }: {
+    title: string;
+    open?: ChainAnchor<boolean> | boolean;
+    children: Widget[];
+  }) {
+    this.dom = div();
+    this.dom.classList.add("w_details");
+    const summ = div();
+    summ.classList.add("w_detailssummary");
     summ.textContent = title;
     this.dom.append(summ);
     this.dom.append(...children.map(c => c.getDOM()));
     this.children = children;
+    if (typeof open === "boolean") {
+      let openState = open;
+      this.dom.setAttribute("open", "" + openState);
+      bindEvent(summ, "click", async _ => {
+        openState = !openState;
+        this.dom.setAttribute("open", "" + openState);
+      });
+      this.openBind = null;
+      this.openListener = null;
+    } else {
+      this.openBind = open;
+      this.openListener = new Listener<boolean>(
+        "settingdetails;open",
+        open,
+        async (v: boolean): Promise<void> => {
+          this.dom.setAttribute("open", "" + v);
+        }
+      );
+      bindEvent(summ, "click", async _ => {
+        await open.set(!open.value());
+      });
+    }
   }
   getDOM(): Element {
     return this.dom;
   }
   destroy(): void {
     for (const c of this.children) c.destroy();
+    if (this.openListener !== null) {
+      (this.openBind as ChainAnchor<boolean>).dests.delete(this.openListener);
+    }
   }
 }

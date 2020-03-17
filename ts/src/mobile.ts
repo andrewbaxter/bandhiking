@@ -26,7 +26,8 @@ import {
   WDetailLevel,
   EWidget,
   wbindList,
-  wtabs
+  wtabs,
+  WBindText
 } from "./widgets";
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -152,7 +153,7 @@ import {
     async get(start: number, count: number): Promise<HydratedTrack[]> {
       const out: HydratedTrack[] = [];
       const current = currentTrack.value();
-      if (current !== null && current.star.value()) out.push(current);
+      if (current !== null && current[0].star.value()) out.push(current[0]);
       let cursor = await db
         .transaction(dbName)
         .store.index("played")
@@ -190,7 +191,9 @@ import {
   // Model setup
   //
   type Filter = {
+    id: string;
     name: string;
+    desc: string;
     on: Setting<boolean>;
     ratio: Setting<number>;
     children: Array<Filter>;
@@ -199,17 +202,17 @@ import {
 
   const settings = {
     volume: new Setting<number>("volume", 1.0),
-    current: new Setting<Track | null>("track", null),
+    current: new Setting<[Track, string] | null>("track", null),
     filters: new Array<Filter>()
   };
 
   const currentTrack = new (class extends ChainLink<
-    [Track | null],
-    HydratedTrack | null
+    [[Track, string] | null],
+    [HydratedTrack, string] | null
   > {
-    do(track: Track | null): HydratedTrack | null {
+    do(track: [Track, string] | null): [HydratedTrack, string] | null {
       if (track === null) return null;
-      return hydrate(track);
+      return [hydrate(track[0]), track[1]];
     }
   })("currentTrack", [settings.current]);
 
@@ -255,15 +258,21 @@ import {
 
   constantOrders.forEach(order => {
     const orderId = "filter/" + order.value;
+    const orderDesc = order.name;
     settings.filters.push({
+      id: orderId,
       name: order.name,
+      desc: orderDesc,
       on: new Setting<boolean>(orderId + ".on", order.value === "top"),
       ratio: new Setting<number>(orderId, 1.0),
       playlist: null,
       children: constantGenres.map(genre => {
         const genreId = orderId + "/" + genre.value;
+        const genreDesc = orderDesc + " / " + genre.name;
         const out = {
+          id: genreId,
           name: genre.name,
+          desc: genreDesc,
           on: new Setting<boolean>(
             genreId + ".on",
             genre.value === "electronic" /* debug */
@@ -272,8 +281,11 @@ import {
           playlist: null,
           children: genre.sub.map(subgenre => {
             const subgenreId = genreId + "/" + subgenre.value;
+            const subgenreDesc = genreDesc + " / " + subgenre.name;
             return {
+              id: subgenreId,
               name: subgenre.name,
+              desc: subgenreDesc,
               on: new Setting<boolean>(subgenreId + ".on", false),
               ratio: new Setting<number>(subgenreId, 1.0),
               playlist: genreTrackRequester(
@@ -285,9 +297,12 @@ import {
             };
           })
         };
+        const allId = genreId + "/all.on";
         out.children.splice(0, 0, {
-          name: "All",
-          on: new Setting<boolean>(genreId + "/all.on", true),
+          id: allId,
+          name: "all",
+          desc: genreDesc + " / all",
+          on: new Setting<boolean>(allId, true),
           ratio: new Setting<number>(genreId + "/all", 1.0),
           playlist: genreTrackRequester(order.value, genre.value, "all"),
           children: []
@@ -303,7 +318,7 @@ import {
   class WPlayer implements Widget {
     frame: HTMLIFrameElement;
     constructor(
-      track: ChainSource<HydratedTrack | null>,
+      track: ChainSource<[HydratedTrack, string] | null>,
       onEnd: () => Promise<void>
     ) {
       this.frame = document.createElement("iframe");
@@ -322,12 +337,13 @@ import {
         const oldChangeState = player.prototype._changestate;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         player.prototype._changestate = function(newstate: string): any {
-          const this1 = this;
-          const volListener = new (class extends Listener<number> {
-            async do(v: number): Promise<void> {
-              this1.setvol(v);
+          const volListener = new Listener<number>(
+            "player;volume",
+            settings.volume,
+            async (v: number): Promise<void> => {
+              this.setvol(v);
             }
-          })("player;volume", settings.volume);
+          );
           if (newstate === "COMPLETED") {
             playBlocked = false;
             // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -337,19 +353,20 @@ import {
             });
           }
           // eslint-disable-next-line prefer-rest-params
-          return oldChangeState.call(this, arguments);
+          return oldChangeState.apply(this, arguments);
         };
         if (!playBlocked)
           this.frame.contentWindow!.document.getElementById("artarea")!.click();
       });
-      const this1 = this;
       // tslint:disable-next-line: no-unused-expression
-      new (class extends Listener<HydratedTrack | null> {
-        async do(v: HydratedTrack | null): Promise<void> {
-          if (v === null) this1.frame.src = "";
-          else this1.frame.src = trackPlayerUrl(v.track);
+      new Listener<[HydratedTrack, string] | null>(
+        "player;track",
+        track,
+        async (v: [HydratedTrack, string] | null): Promise<void> => {
+          if (v === null) this.frame.src = "";
+          else this.frame.src = trackPlayerUrl(v[0].track);
         }
-      })("player;track", track);
+      );
     }
     getDOM(): Element {
       return this.frame;
@@ -415,7 +432,7 @@ import {
             value = found;
           }
           hydrate(value);
-          await settings.current.set(value);
+          await settings.current.set([value, filter.desc]);
           return;
         }
         break;
@@ -431,16 +448,9 @@ import {
   const finishCurrent = async (): Promise<void> => {
     const t = currentTrack.value();
     if (t === null) return;
-    t.track.playedAt = new Date();
-    await db.put("tracks", t.track);
+    t[0].track.playedAt = new Date();
+    await db.put("tracks", t[0].track);
     await advance();
-  };
-
-  const wimage = (src: string, alt: string): Widget => {
-    const img = document.createElement("img");
-    img.src = src;
-    img.alt = alt;
-    return new EWidget(img);
   };
 
   const wimageLink = (src: string, alt: string, href: string): Widget => {
@@ -450,6 +460,7 @@ import {
     const a = document.createElement("a");
     a.href = href;
     a.append(img);
+    a.classList.add("w_imagelink");
     return new EWidget(a);
   };
 
@@ -498,20 +509,30 @@ import {
         })
       );
     } else {
-      return new WDetailLevel(
-        at.name,
-        whbox(
-          new WToggleButton({ klass: "enabled", text: "enabled", bind: at.on }),
-          new WSlider({
-            text: "Overall",
-            min: 0,
-            max: 1,
-            step: 0.01,
-            bind: at.ratio
-          })
-        ),
-        ...at.children.map(settingsTree)
-      );
+      return new WDetailLevel({
+        title: at.name,
+        open: new Setting("settingopen/" + at.id, at.id === "setting/top"),
+        children: [
+          whbox(
+            new WToggleButton({
+              klass: "enabled",
+              text: "enabled",
+              bind: at.on
+            }),
+            wtag(
+              "combined",
+              new WSlider({
+                text: "combined",
+                min: 0,
+                max: 1,
+                step: 0.01,
+                bind: at.ratio
+              })
+            )
+          ),
+          ...at.children.map(settingsTree)
+        ]
+      });
     }
   };
 
@@ -525,7 +546,11 @@ import {
       "maintabs",
       await wtabs({
         tabs: [
-          wimage("logo.svg", "Bandhiking"),
+          wimageLink(
+            "logo.svg",
+            "Bandhiking",
+            "https://gitlab.com/rendaw/bandhiking"
+          ),
           new WTab({
             icon: "play.svg",
             text: "Playing",
@@ -535,6 +560,12 @@ import {
                 "playbody",
                 wvbox(
                   player,
+                  wtag(
+                    "info",
+                    new WBindText("player;from", currentTrack, t =>
+                      t !== null ? "From: " + t[1] : ""
+                    )
+                  ),
                   wtag(
                     "controls",
                     whbox(
@@ -557,15 +588,15 @@ import {
                         klass: "star_check",
                         text: "Star",
                         bind: new (class extends IndirectChainAnchor<
-                          [HydratedTrack | null],
+                          [[HydratedTrack, string] | null],
                           boolean
                         > {
                           do(
-                            track: HydratedTrack | null
+                            track: [HydratedTrack, string] | null
                           ): ChainAnchor<boolean> {
                             if (track === null)
                               return new ValueChainAnchor(false);
-                            return track.star;
+                            return track[0].star;
                           }
                         })("main;star", [currentTrack])
                       })
@@ -599,7 +630,10 @@ import {
             icon: "cog.svg",
             text: "Settings",
             builder: async (): Promise<Widget> => {
-              return wvbox(...settings.filters.map(settingsTree));
+              return wtag(
+                "settings",
+                wvbox(...settings.filters.map(settingsTree))
+              );
             }
           })
         ]

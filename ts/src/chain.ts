@@ -16,7 +16,7 @@ export interface ChainDest {
 }
 
 export interface ChainAnchor<O> extends ChainSource<O> {
-  set(value: O): void;
+  set(value: O): Promise<void>;
 }
 
 export class ValueChainAnchor<O> implements ChainSource<O> {
@@ -55,10 +55,16 @@ export class ValueChainAnchor<O> implements ChainSource<O> {
   }
 }
 
-export abstract class Listener<I> implements ChainDest {
+export class Listener<I> implements ChainDest {
   comment: string;
   source: ChainSource<I>;
-  constructor(comment: string, source: ChainSource<I>) {
+  cb: (v: I) => Promise<void>;
+  constructor(
+    comment: string,
+    source: ChainSource<I>,
+    cb: (v: I) => Promise<void>
+  ) {
+    this.cb = cb;
     this.comment = comment;
     this.source = source;
     this.source.dests.add(this);
@@ -66,10 +72,8 @@ export abstract class Listener<I> implements ChainDest {
   }
 
   async process(): Promise<void> {
-    await this.do(this.source.value());
+    await this.cb(this.source.value());
   }
-
-  abstract do(v: I): Promise<void>;
 
   destroy(): void {
     this.source.dests.delete(this);
@@ -103,8 +107,8 @@ export abstract class IndirectChainAnchor<I extends any[], O>
     );
   }
 
-  set(value: O): void {
-    this.current.set(value);
+  async set(value: O): Promise<void> {
+    await this.current.set(value);
   }
 
   abstract do(...values: I): ChainAnchor<O>;

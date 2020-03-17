@@ -165,17 +165,38 @@ func main() {
 		date := time.Now()
 		logrus.Tracef("Starting scrape, %v", date)
 
-		rankpage := func(url string, rank int, sort string, topcat string, subcat string) int {
+		type GenreState struct {
+			Done bool
+			Rank int
+			Page int
+		}
+		pages := map[string]GenreState{}
+
+		rankpage := func(stateKey string, url string, sort string, topcat string, subcat string) bool {
+			state, ok := pages[stateKey]
+			if !ok {
+				state = GenreState{
+					Done: false,
+					Rank: 0,
+					Page: 0,
+				}
+				pages[stateKey] = state
+			}
+			if state.Done {
+				return false
+			}
+			url = fmt.Sprintf(url, state.Page)
+			rank := state.Rank
 			logrus.Tracef("Fetching %v", url)
 			res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
 			if err != nil {
 				logrus.Errorf("Failed to request page %v; %+v", url, err)
-				return rank
+				return true
 			}
 			data, err := gabs.ParseJSONBuffer(res.RawBody())
 			if err != nil {
 				logrus.Warnf("Failed to read response on %v: %+v", url, err)
-				return rank
+				return true
 			}
 			for _, trackdata := range data.Search("items").Children() {
 				bytes, err := trackdata.MarshalJSON()
@@ -187,7 +208,9 @@ func main() {
 					logrus.Infof("Unhandled item type %v: %v", _type, string(bytes))
 					continue
 				}
-				trackID0 := trackdata.Search("featured_track", "id").Data()
+				trackID0 := trackdata.Search(
+					"id",
+				).Data() // Not actually track - probably album id, but should be more consistent
 				if trackID0 == nil {
 					logrus.Errorf("Failed to extract expected data from track: %+v", trackdata)
 					continue
@@ -200,7 +223,7 @@ func main() {
 				)
 				if err != nil {
 					logrus.Errorf("Failed to create track record; %+v", err)
-					return -1
+					return true
 				}
 				_, err = db.Exec(
 					"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6) on conflict (\"primary\", secondary, sort, date, rank) do nothing",
@@ -213,41 +236,48 @@ func main() {
 				)
 				if err != nil {
 					logrus.Errorf("Failed to create track rank record; %+v", err)
-					return -1
+					return true
 				}
 				rank++
 			}
-			return rank
-		}
 
-		for _, sort := range []string{"top", "new", "rec"} {
-			for _, topcat := range genres {
-				{
-					rank := 0
-					for page := 0; page < 20; page++ {
-						url := fmt.Sprintf(
-							"https://bandcamp.com/api/discover/3/get_web?g=%v&s=%v&p=%v&gn=0&f=all&w=0",
-							topcat.Value,
-							sort,
-							page,
-						)
-						rank = rankpage(url, rank, sort, topcat.Value, "all")
+			state.Page++
+			if rank == state.Rank {
+				state.Done = true
+			}
+			state.Rank = rank
+
+			return true
+		}
+		for pagei := 0; pagei < 20; pagei++ {
+			for _, sort := range []string{"top", "new", "rec"} {
+				for _, topcat := range genres {
+					allKey := fmt.Sprintf("%v/%v", sort, topcat.Value)
+					url := fmt.Sprintf(
+						"https://bandcamp.com/api/discover/3/get_web?g=%v&s=%v&p=%%v&gn=0&f=all&w=0",
+						topcat.Value,
+						sort,
+					)
+					if rankpage(allKey, url, sort, topcat.Value, "all") {
 						time.Sleep(30 * time.Second)
 					}
-				}
-				time.Sleep(30 * time.Second)
-				for _, subcat := range topcat.Sub {
-					rank := 0
-					for page := 0; page < 20; page++ {
+					for _, subcat := range topcat.Sub {
+						subKey := fmt.Sprintf("%v/%v", allKey, subcat.Value)
 						url := fmt.Sprintf(
-							"https://bandcamp.com/api/discover/3/get_web?g=%v&t=%v&s=%v&p=%v&gn=0&f=all&w=0",
+							"https://bandcamp.com/api/discover/3/get_web?g=%v&t=%v&s=%v&p=%%v&gn=0&f=all&w=0",
 							topcat.Value,
 							subcat.Value,
 							sort,
-							page,
 						)
-						rank = rankpage(url, rank, sort, topcat.Value, subcat.Value)
-						time.Sleep(30 * time.Second)
+						if rankpage(
+							subKey,
+							url,
+							sort,
+							topcat.Value,
+							subcat.Value,
+						) {
+							time.Sleep(30 * time.Second)
+						}
 					}
 				}
 			}

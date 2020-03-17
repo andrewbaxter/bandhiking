@@ -33,6 +33,7 @@ module.exports = {
     "max-classes-per-file": "off",
     "new-parens": "error",
     "@typescript-eslint/no-this-alias": "off",
+    "@typescript-eslint/no-misused-promises": "error",
     "no-bitwise": "error",
     "no-caller": "error",
     "no-cond-assign": "error",
