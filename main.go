@@ -162,7 +162,11 @@ func main() {
 	myhttp := resty.New()
 	myhttp.SetRetryCount(3)
 	scrapeInner := func() {
-		date := time.Now()
+		BeginningOfDay := func(t time.Time) time.Time {
+			year, month, day := t.Date()
+			return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+		}
+		date := BeginningOfDay(time.Now())
 		logrus.Tracef("Starting scrape, %v", date)
 
 		type GenreState struct {
