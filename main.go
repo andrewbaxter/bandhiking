@@ -174,12 +174,12 @@ func main() {
 			Rank int
 			Page int
 		}
-		pages := map[string]GenreState{}
+		pages := map[string]*GenreState{}
 
 		rankpage := func(stateKey string, url string, sort string, topcat string, subcat string) bool {
 			state, ok := pages[stateKey]
 			if !ok {
-				state = GenreState{
+				state = &GenreState{
 					Done: false,
 					Rank: 0,
 					Page: 0,

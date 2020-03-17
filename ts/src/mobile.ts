@@ -355,8 +355,13 @@ import {
           // eslint-disable-next-line prefer-rest-params
           return oldChangeState.apply(this, arguments);
         };
-        if (!playBlocked)
-          this.frame.contentWindow!.document.getElementById("artarea")!.click();
+        const artarea = this.frame.contentWindow!.document.getElementById(
+          "artarea"
+        )!;
+        artarea.addEventListener("click", _ => {
+          playBlocked = false;
+        });
+        if (!playBlocked) artarea.click();
       });
       // tslint:disable-next-line: no-unused-expression
       new Listener<[HydratedTrack, string] | null>(
