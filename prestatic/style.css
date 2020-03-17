@@ -25,13 +25,13 @@ body {
   background-image: url("bg.svg");
   background-repeat: repeat;
   display: flex;
-  justify-content: center;
-  align-content: center;
+  flex-direction: column;
+  align-items: center;
   height: 100%;
 }
 
 body > div {
-  height: 100%;
+  flex-grow: 1;
   background: black;
   border-left: 1px solid black;
   border-right: 1px solid black;
@@ -39,10 +39,19 @@ body > div {
   margin-right: 1em;
   width: 350px;
   max-width: 100%;
+  min-height: 0;
 }
 
 .maintabs > .w_tabheader {
   background: var(--bg1b);
+  min-height: auto;
+  align-items: center;
+}
+
+.w_tabheader a {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 body > * {
@@ -56,9 +65,20 @@ body > * {
   display: flex;
 }
 
+.w_text {
+  color: #909190;
+  margin: 1em;
+  font-family: sans-serif;
+}
+
 .w__hdiv,
 .w_hbox {
   flex-direction: row;
+}
+
+.w__hdiv > *,
+.w_hbox > * {
+  min-width: 0;
 }
 
 .w__vdiv,
@@ -66,22 +86,34 @@ body > * {
   flex-direction: column;
 }
 
-.w_player,
+.w__vdiv > *,
+.w_vbox > * {
+  min-height: 0;
+}
+
+.w_player {
+  flex-grow: 2;
+}
 .controls {
-  flex-grow: 0;
+  flex-grow: 1;
+}
+
+.w_imagelink {
+  display: inline-flex;
+  width: fit-content;
+  height: fit-content;
+  min-width: fit-content;
+  min-height: fit-content;
 }
 
 .maintabs > .w_tabbody {
-  height: 100%;
-}
-
-.playbody {
-  justify-content: space-evenly;
-  height: 100%;
+  flex-grow: 1;
+  overflow: auto;
 }
 
 .controls {
   justify-content: space-evenly;
+  align-items: center;
 }
 
 .w_toggle div {
@@ -158,16 +190,44 @@ img.w_button:hover {
   background: #232323;
 }
 
+.w_details[open="false"] > *:not(.w_detailssummary) {
+  display: none !important;
+}
+
+.w_details .w_detailssummary {
+  cursor: pointer;
+  padding-left: calc(var(--icons) * 1.25);
+  margin-left: calc(var(--icons) * -1.25);
+  display: inline-block;
+  background-image: url("chevron-right.svg");
+  background-repeat: no-repeat;
+  background-position: left center;
+}
+
+.w_details[open="true"] > .w_detailssummary {
+  background-image: url("chevron-down.svg");
+}
+
 .trcklistelement {
   background: black;
   margin: 0.2em;
   padding: 0.2em;
+  font-family: sans-serif;
+  align-items: center;
+}
+
+.trcklistelement > a {
+  margin: 4px;
 }
 
 .trcklistelement > div {
   justify-content: space-around;
   padding-left: 0.2em;
   width: 100%;
+}
+
+.trcklistelement > div > a {
+  margin-left: 0.5em;
 }
 
 .trcklistelement .w_toggle {
@@ -181,11 +241,27 @@ a {
 
 .settings {
   background-color: var(--bg2);
-  border: 2px solid black;
+  border-left: 2px solid black;
   padding: 1em;
+  padding-left: calc(var(--icons) * 1.25 + 1em);
   overflow-y: auto;
   color: var(--color5);
   font-family: sans-serif;
+  flex-grow: 1;
+  display: grid;
+  grid-template-columns: 0fr 0fr 1fr;
+  align-items: center;
+  text-transform: capitalize;
+  grid-template-rows: 0fr 0fr 0fr 1fr;
+  border-right: 2px solid black;
+  grid-gap: 0.4em;
+}
+
+.settings .combined::after {
+  content: "";
+  grid-column: span 3;
+  display: inline-block;
+  height: 1em;
 }
 
 .settings .w_toggle input {
@@ -196,18 +272,22 @@ a {
   background-image: url("checkbox-marked-outline.svg");
 }
 
-.settings details {
-  display: grid;
-  grid-template-columns: 25% 50% 25%;
+.settings .w_details {
+  display: contents;
 }
 
-.settings details > .w_hbox {
+.settings .w_detailssummary {
+  grid-column: span 3;
+}
+
+.settings .w_details > .w_hbox {
   display: contents;
 }
 
 .settings .w_toggle {
-  grid-column: 1 / 1;
+  grid-column: 1;
   display: inline-block;
+  min-width: auto;
 }
 
 .settings .w_slider {
@@ -215,30 +295,25 @@ a {
 }
 
 .settings .w_slider label {
-  grid-column: 2 / 2;
+  grid-column: 2;
+  min-width: auto;
 }
 
 .settings .w_slider input {
-  grid-column: 3 / 3;
+  grid-column: 3;
 }
 
-.settings summary {
-grid-column: 1 / span 2;
-}
-
-.settings > details > summary:nth-child(1) {
+.settings > .w_details:nth-child(1) > .w_detailssummary {
   margin-top: 0.2em;
 }
 
-.settings > details > summary {
+.settings > .w_details > .w_detailssummary {
   margin-top: 1em;
-font-size: 1.5em;
-font-weight: bold;
-text-transform: capitalize
+  font-size: 1.5em;
+  font-weight: bold;
 }
 
-.settings > details > details > summary {
+.settings > .w_details > .w_details > .w_detailssummary {
   margin-top: 0.5em;
-font-size: 1.2em;
-text-transform: capitalize;
+  font-size: 1.2em;
 }
