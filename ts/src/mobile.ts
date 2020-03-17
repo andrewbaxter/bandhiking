@@ -15,9 +15,7 @@ import {
   wbutton,
   whbox,
   wvbox,
-  WBindList,
   WTab,
-  WTabs,
   wroot,
   WSlider,
   WToggleButton,
@@ -26,7 +24,9 @@ import {
   hdiv,
   vdiv,
   WDetailLevel,
-  EWidget
+  EWidget,
+  wbindList,
+  wtabs
 } from "./widgets";
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -132,7 +132,7 @@ import {
         .store.index("played")
         .openCursor(undefined, "prev");
       if (cursor === null) return [];
-      cursor = await cursor.advance(start);
+      if (start > 0) cursor = await cursor.advance(start);
       const out = [];
       let at = 0;
       while (cursor) {
@@ -158,7 +158,7 @@ import {
         .store.index("played")
         .openCursor(undefined, "prev");
       if (cursor === null) return out;
-      cursor = await cursor.advance(start);
+      if (start > 0) cursor = await cursor.advance(start);
       let at = 0;
       while (cursor) {
         if (at >= count) break;
@@ -523,14 +523,14 @@ import {
   wroot(
     wtag(
       "maintabs",
-      new WTabs({
+      await wtabs({
         tabs: [
           wimage("logo.svg", "Bandhiking"),
           new WTab({
             icon: "play.svg",
             text: "Playing",
             keep: true,
-            builder: (): Widget => {
+            builder: async (): Promise<Widget> => {
               return wtag(
                 "playbody",
                 wvbox(
@@ -578,8 +578,8 @@ import {
           new WTab({
             icon: "history.svg",
             text: "History",
-            builder: (): Widget => {
-              return new WBindList({
+            builder: (): Promise<Widget> => {
+              return wbindList({
                 source: trackHistory,
                 create: (v): Widget => new TrackListElement(v)
               });
@@ -588,8 +588,8 @@ import {
           new WTab({
             icon: "star-outline.svg",
             text: "Favorites",
-            builder: (): Widget => {
-              return new WBindList({
+            builder: (): Promise<Widget> => {
+              return wbindList({
                 source: trackFavorites,
                 create: (v): Widget => new TrackListElement(v)
               });
@@ -598,7 +598,7 @@ import {
           new WTab({
             icon: "cog.svg",
             text: "Settings",
-            builder: (): Widget => {
+            builder: async (): Promise<Widget> => {
               return wvbox(...settings.filters.map(settingsTree));
             }
           })

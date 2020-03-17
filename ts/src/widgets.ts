@@ -50,7 +50,7 @@ enum LabelMode {
 
 export class WTab implements Widget {
   dom: Element;
-  builder: () => Widget;
+  builder: () => Promise<Widget>;
   widget: Widget | null;
   keep: boolean;
   constructor({
@@ -64,7 +64,7 @@ export class WTab implements Widget {
     text: string;
     keep?: boolean;
     labelMode?: LabelMode;
-    builder: () => Widget;
+    builder: () => Promise<Widget>;
   }) {
     this.keep = keep;
     const constructIcon = (): Element => {
@@ -115,9 +115,9 @@ export class WTab implements Widget {
     return this.dom;
   }
 
-  getBodyDOM(): Element | null {
+  async getBodyDOM(): Promise<Element | null> {
     if (this.widget === null) {
-      this.widget = this.builder();
+      this.widget = await this.builder();
       return this.widget.getDOM();
     } else {
       (this.widget.getDOM() as HTMLElement).style.display = "";
@@ -147,54 +147,63 @@ const isWTab = (v: Widget): v is WTab => {
   return "getBodyDOM" in v;
 };
 
-export class WTabs implements Widget {
+export const wtabs = async ({
+  tabs
+}: {
+  tabs: (Widget | WTab)[];
+}): Promise<WTabs> => {
+  const out = new WTabs({ tabs: tabs });
+  for (const tab of out.tabs) {
+    if (!isWTab(tab)) continue;
+    await out.select(tab);
+    break;
+  }
+  return out;
+};
+
+class WTabs implements Widget {
   div: HTMLDivElement;
   tabs: (WTab | Widget)[];
   selected: WTab | null;
+  tabsBody: HTMLDivElement;
   constructor({ tabs }: { tabs: (Widget | WTab)[] }) {
     this.div = vdiv();
     this.div.classList.add("w_tabs");
     const tabsHeader = hdiv();
     tabsHeader.classList.add("w_tabheader");
-    const tabsBody = vdiv();
-    tabsBody.classList.add("w_tabbody");
-    this.div.append(tabsHeader, tabsBody);
+    this.tabsBody = vdiv();
+    this.tabsBody.classList.add("w_tabbody");
+    this.div.append(tabsHeader, this.tabsBody);
     this.tabs = tabs;
-    const select = async (tab: WTab): Promise<void> => {
-      if (this.selected === tab) return;
-      if (this.selected !== null) {
-        this.selected.getDOM().classList.remove("w_selected");
-        this.selected.destroyBody();
-      }
-      this.selected = tab;
-      this.selected.getDOM().classList.add("w_selected");
-      const bodyDOM = tab.getBodyDOM(); // Null means already present, hidden
-      if (bodyDOM !== null) tabsBody.append(bodyDOM);
-    };
     let firstTab: WTab | null = null;
     for (const tab of tabs) {
       const dom = tab.getDOM();
       if (isWTab(tab)) {
         if (firstTab === null) firstTab = tab;
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises
-        dom.addEventListener("click", _ =>
-          event(async () => {
-            await select(tab);
-          })
-        );
+        bindEvent(dom, "click", async _ => {
+          await this.select(tab);
+        });
       }
       tabsHeader.append(dom);
     }
     this.selected = null;
-    if (firstTab !== null)
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      select(firstTab);
   }
   getDOM(): Element {
     return this.div;
   }
   destroy(): void {
     for (const tab of this.tabs) tab.destroy();
+  }
+  async select(tab: WTab): Promise<void> {
+    if (this.selected === tab) return;
+    if (this.selected !== null) {
+      this.selected.getDOM().classList.remove("w_selected");
+      this.selected.destroyBody();
+    }
+    this.selected = tab;
+    this.selected.getDOM().classList.add("w_selected");
+    const bodyDOM = await tab.getBodyDOM(); // Null means already present, hidden
+    if (bodyDOM !== null) this.tabsBody.append(bodyDOM);
   }
 }
 
@@ -355,13 +364,27 @@ type ListElement = {
   w: Widget;
 };
 
-export class WBindList<T> implements Widget {
+export const wbindList = async <T>({
+  source,
+  create
+}: {
+  source: DataSource<T>;
+  create: (e: T) => Widget;
+}): Promise<WBindList<T>> => {
+  const out = new WBindList({ source: source, create: create });
+  await out.update(false);
+  return out;
+};
+
+class WBindList<T> implements Widget {
   // Show X
   // X before/after offscreen
   // Up to 2X before/after offscreen
   elements: ListElement[];
   div: HTMLDivElement;
   resizeListener: (e: Event) => void;
+  createElement: (e: T) => Widget;
+  source: DataSource<T>;
   constructor({
     source,
     create
@@ -373,81 +396,85 @@ export class WBindList<T> implements Widget {
     this.div.classList.add("w_list");
     this.div.style.overflowY = "auto";
     this.elements = [];
-    const update = async (isRetry: boolean): Promise<void> => {
-      const box = this.div.getBoundingClientRect();
-      let firstVisibleIndex = 0;
-      let firstVisible: [ListElement, DOMRect] | null = null;
-      let lastVisible: [ListElement, DOMRect] | null = null;
-      for (const e of this.elements) {
-        const ebox = e.w.getDOM().getBoundingClientRect();
-        if (ebox.bottom < box.top) continue;
-        if (firstVisible === null) {
-          firstVisible = [e, ebox];
-          firstVisibleIndex = e.index;
-        }
-        lastVisible = [e, ebox];
-        if (ebox.top > box.bottom) break;
+    this.createElement = create;
+    this.source = source;
+    window.addEventListener(
+      "resize",
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (this.resizeListener = (_): Promise<void> =>
+        event(async () => {
+          await this.update(false);
+        }))
+    );
+    bindEvent(this.div, "scroll", async _ => {
+      await this.update(false);
+    });
+  }
+  async update(isRetry: boolean): Promise<void> {
+    const box = this.div.getBoundingClientRect();
+    let firstVisibleIndex = 0;
+    let firstVisible: [ListElement, DOMRect] | null = null;
+    let lastVisible: [ListElement, DOMRect] | null = null;
+    for (const e of this.elements) {
+      const ebox = e.w.getDOM().getBoundingClientRect();
+      if (ebox.bottom < box.top) continue;
+      if (firstVisible === null) {
+        firstVisible = [e, ebox];
+        firstVisibleIndex = e.index;
       }
-      let basecount = 30;
-      if (firstVisible !== null) {
-        lastVisible = lastVisible!; // firstVisible -> lastVisible
-        const usedCount = lastVisible[0].index - firstVisible[0].index;
-        const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
-        const visibleAvailable = box.bottom - box.top;
-        basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
-      } else if (!isRetry) {
-        setTimeout(
-          // eslint-disable-next-line @typescript-eslint/no-misused-promises
-          () =>
-            event(async () => {
-              await update(true);
-            }),
-          1
-        );
-      }
+      lastVisible = [e, ebox];
+      if (ebox.top > box.bottom) break;
+    }
+    let basecount = 30;
+    if (firstVisible !== null) {
+      lastVisible = lastVisible!; // firstVisible -> lastVisible
+      const usedCount = lastVisible[0].index - firstVisible[0].index;
+      const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
+      const visibleAvailable = box.bottom - box.top;
+      basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
+    }
 
-      const createMultiple = async (
-        dstart: number,
-        cstart: number,
-        count: number
-      ): Promise<void> => {
-        const newData = await source.get(cstart, count);
-        const nodes: Element[] = [];
-        const elements: ListElement[] = [];
+    const createMultiple = async (
+      dstart: number,
+      cstart: number,
+      count: number
+    ): Promise<void> => {
+      const newData = await this.source.get(cstart, count);
+      const nodes: Element[] = [];
+      const elements: ListElement[] = [];
+      for (let i = 0; i < newData.length; ++i) {
+        const e = newData[i];
+        const w = this.createElement(e);
+        nodes.push(w.getDOM());
+        elements.push({
+          index: cstart + i,
+          w: w
+        });
+      }
+      if (dstart >= this.elements.length) {
+        this.div.append(...nodes);
+      } else {
+        const ref = this.elements[dstart].w.getDOM();
         for (let i = 0; i < newData.length; ++i) {
-          const e = newData[i];
-          const w = create(e);
-          nodes.push(w.getDOM());
-          elements.push({
-            index: cstart + i,
-            w: w
-          });
+          this.div.insertBefore(ref, nodes[i]);
         }
-        if (dstart >= this.elements.length - 1) {
-          this.div.append(...nodes);
-        } else {
-          const ref = this.elements[dstart].w.getDOM();
-          for (let i = 0; i < newData.length; ++i) {
-            this.div.insertBefore(ref, nodes[i]);
-          }
-        }
-        this.elements.splice(dstart, 0, ...elements);
-      };
+      }
+      this.elements.splice(dstart, 0, ...elements);
+    };
 
-      const removeMultiple = (dstart: number, count: number): void => {
-        for (const e of this.elements.slice(dstart, count)) {
-          e.w.getDOM().remove();
-          e.w.destroy();
-        }
-        this.elements.splice(dstart, count);
-      };
+    const removeMultiple = (dstart: number, count: number): void => {
+      for (const e of this.elements.slice(dstart, count)) {
+        e.w.getDOM().remove();
+        e.w.destroy();
+      }
+      this.elements.splice(dstart, count);
+    };
 
-      const firstIndex =
-        this.elements.length === 0 ? 0 : this.elements[0].index;
-      const lastIndex =
-        this.elements.length === 0
-          ? 0
-          : this.elements[this.elements.length - 1].index;
+    if (this.elements.length === 0) {
+      await createMultiple(0, 0, basecount * 3);
+    } else {
+      const firstIndex = this.elements[0].index;
+      const lastIndex = this.elements[this.elements.length - 1].index;
       const needBeforeStart = Math.max(0, firstVisibleIndex - basecount);
       const needBefore = firstIndex - needBeforeStart;
       if (needBefore < -basecount) {
@@ -464,20 +491,19 @@ export class WBindList<T> implements Widget {
       } else if (needAfter > 0) {
         await createMultiple(this.elements.length, lastIndex + 1, basecount);
       }
-    };
-    window.addEventListener(
-      "resize",
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      (this.resizeListener = (_): Promise<void> =>
-        event(async () => {
-          await update(false);
-        }))
-    );
-    bindEvent(this.div, "scroll", async _ => {
-      await update(false);
-    });
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    update(false);
+
+      if (firstVisible === null && !isRetry) {
+        // Figure out real size after rendering first batch
+        setTimeout(
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises
+          () =>
+            event(async () => {
+              await this.update(true);
+            }),
+          1
+        );
+      }
+    }
   }
   getDOM(): Element {
     return this.div;
