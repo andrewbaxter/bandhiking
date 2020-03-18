@@ -491,7 +491,7 @@ class WBindList<T> implements Widget {
       } else {
         const ref = this.elements[dstart].w.getDOM();
         for (let i = 0; i < newData.length; ++i) {
-          this.div.insertBefore(ref, nodes[i]);
+          this.div.insertBefore(nodes[i], ref);
         }
       }
       this.elements.splice(dstart, 0, ...elements);

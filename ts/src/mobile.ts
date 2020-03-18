@@ -273,10 +273,7 @@ import {
           id: genreId,
           name: genre.name,
           desc: genreDesc,
-          on: new Setting<boolean>(
-            genreId + ".on",
-            genre.value === "electronic" /* debug */
-          ),
+          on: new Setting<boolean>(genreId + ".on", true),
           ratio: new Setting<number>(genreId, 1.0),
           playlist: null,
           children: genre.sub.map(subgenre => {
@@ -351,6 +348,7 @@ import {
               settings.volume.dests.delete(volListener);
               await onEnd();
             });
+            return;
           }
           // eslint-disable-next-line prefer-rest-params
           return oldChangeState.apply(this, arguments);

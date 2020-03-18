@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -160,6 +161,7 @@ func main() {
 	}
 
 	myhttp := resty.New()
+	myhttp.SetHeader("User-Agent", "https://gitlab.com/rendaw/bandhiking")
 	myhttp.SetRetryCount(3)
 	scrapeInner := func() {
 		BeginningOfDay := func(t time.Time) time.Time {
@@ -257,25 +259,25 @@ func main() {
 			for _, sort := range []string{"top", "new", "rec"} {
 				for _, topcat := range genres {
 					allKey := fmt.Sprintf("%v/%v", sort, topcat.Value)
-					url := fmt.Sprintf(
+					allURL := fmt.Sprintf(
 						"https://bandcamp.com/api/discover/3/get_web?g=%v&s=%v&p=%%v&gn=0&f=all&w=0",
-						topcat.Value,
+						strings.ReplaceAll(url.QueryEscape(topcat.Value), "%", "%%"),
 						sort,
 					)
-					if rankpage(allKey, url, sort, topcat.Value, "all") {
+					if rankpage(allKey, allURL, sort, topcat.Value, "all") {
 						time.Sleep(30 * time.Second)
 					}
 					for _, subcat := range topcat.Sub {
 						subKey := fmt.Sprintf("%v/%v", allKey, subcat.Value)
-						url := fmt.Sprintf(
+						subURL := fmt.Sprintf(
 							"https://bandcamp.com/api/discover/3/get_web?g=%v&t=%v&s=%v&p=%%v&gn=0&f=all&w=0",
-							topcat.Value,
-							subcat.Value,
+							strings.ReplaceAll(url.QueryEscape(topcat.Value), "%", "%%"),
+							strings.ReplaceAll(url.QueryEscape(subcat.Value), "%", "%%"),
 							sort,
 						)
 						if rankpage(
 							subKey,
-							url,
+							subURL,
 							sort,
 							topcat.Value,
 							subcat.Value,
