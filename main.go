@@ -255,7 +255,7 @@ func main() {
 
 			return true
 		}
-		for pagei := 0; pagei < 20; pagei++ {
+		for pagei := 0; pagei < 2; pagei++ {
 			for _, sort := range []string{"top", "new", "rec"} {
 				for _, topcat := range genres {
 					allKey := fmt.Sprintf("%v/%v", sort, topcat.Value)
@@ -298,7 +298,7 @@ func main() {
 		atomic.StoreInt32(&isScraping.scraping, 0)
 	}
 	mycron := cron.New()
-	mycron.AddFunc("@every 24h", scrape)
+	mycron.AddFunc("@daily", scrape)
 	mycron.Start()
 
 	static := http.FileServer(http.Dir("./static"))

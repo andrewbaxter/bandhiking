@@ -445,30 +445,8 @@ class WBindList<T> implements Widget {
       await this.update(false);
     });
   }
-  async update(isRetry: boolean): Promise<void> {
-    const box = this.div.getBoundingClientRect();
-    let firstVisibleIndex = 0;
-    let firstVisible: [ListElement, DOMRect] | null = null;
-    let lastVisible: [ListElement, DOMRect] | null = null;
-    for (const e of this.elements) {
-      const ebox = e.w.getDOM().getBoundingClientRect();
-      if (ebox.bottom < box.top) continue;
-      if (firstVisible === null) {
-        firstVisible = [e, ebox];
-        firstVisibleIndex = e.index;
-      }
-      lastVisible = [e, ebox];
-      if (ebox.top > box.bottom) break;
-    }
-    let basecount = 30;
-    if (firstVisible !== null) {
-      lastVisible = lastVisible!; // firstVisible -> lastVisible
-      const usedCount = lastVisible[0].index - firstVisible[0].index;
-      const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
-      const visibleAvailable = box.bottom - box.top;
-      basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
-    }
 
+  async update(isRetry: boolean): Promise<void> {
     const createMultiple = async (
       dstart: number,
       cstart: number,
@@ -498,37 +476,16 @@ class WBindList<T> implements Widget {
     };
 
     const removeMultiple = (dstart: number, count: number): void => {
-      for (const e of this.elements.slice(dstart, count)) {
+      const removed = this.elements.splice(dstart, count);
+      for (const e of removed) {
         e.w.getDOM().remove();
         e.w.destroy();
       }
-      this.elements.splice(dstart, count);
     };
 
     if (this.elements.length === 0) {
-      await createMultiple(0, 0, basecount * 3);
-    } else {
-      const firstIndex = this.elements[0].index;
-      const lastIndex = this.elements[this.elements.length - 1].index;
-      const needBeforeStart = Math.max(0, firstVisibleIndex - basecount);
-      const needBefore = firstIndex - needBeforeStart;
-      if (needBefore < -basecount) {
-        const excess = -needBefore - basecount;
-        removeMultiple(0, excess);
-      } else if (needBefore > 0) {
-        await createMultiple(0, Math.max(0, firstIndex - basecount), basecount);
-      }
-      const needAfterEnd = firstVisibleIndex + basecount * 2;
-      const needAfter = needAfterEnd - lastIndex;
-      if (needAfter < -basecount) {
-        const excess = -needAfter - basecount;
-        removeMultiple(this.elements.length - excess, excess);
-      } else if (needAfter > 0) {
-        await createMultiple(this.elements.length, lastIndex + 1, basecount);
-      }
-
-      if (firstVisible === null && !isRetry) {
-        // Figure out real size after rendering first batch
+      await createMultiple(0, 0, 60);
+      if (!isRetry)
         setTimeout(
           // eslint-disable-next-line @typescript-eslint/no-misused-promises
           () =>
@@ -537,6 +494,48 @@ class WBindList<T> implements Widget {
             }),
           1
         );
+    } else {
+      const box = this.div.getBoundingClientRect();
+      let firstVisibleIndex = 0;
+      let firstVisible: [ListElement, DOMRect] | null = null;
+      let lastVisible: [ListElement, DOMRect] | null = null;
+      for (const e of this.elements) {
+        const ebox = e.w.getDOM().getBoundingClientRect();
+        if (ebox.bottom < box.top) continue;
+        if (firstVisible === null) {
+          firstVisible = [e, ebox];
+          firstVisibleIndex = e.index;
+        }
+        lastVisible = [e, ebox];
+        if (ebox.top > box.bottom) break;
+      }
+      firstVisible = firstVisible!;
+      lastVisible = lastVisible!;
+      const usedCount = lastVisible[0].index - firstVisible[0].index;
+      const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
+      const visibleAvailable = box.bottom - box.top;
+      const basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
+      const removeThreshold = basecount * 1.5;
+      const firstIndex = this.elements[0].index;
+      const lastIndex = this.elements[this.elements.length - 1].index;
+
+      const needAfterEnd = firstVisibleIndex + basecount * 1.5;
+      const needAfter = needAfterEnd - lastIndex;
+      if (-needAfter > removeThreshold) {
+        const excess = -needAfter - removeThreshold;
+        removeMultiple(this.elements.length - excess, excess);
+      } else if (needAfter > 0) {
+        await createMultiple(this.elements.length, lastIndex + 1, basecount);
+      }
+
+      const needBeforeStart = Math.max(0, firstVisibleIndex - basecount * 0.5);
+      const needBefore = firstIndex - needBeforeStart;
+      if (-needBefore > removeThreshold) {
+        const excess = -needBefore - removeThreshold;
+        removeMultiple(0, excess);
+      } else if (needBefore > 0) {
+        const cstart = Math.max(0, firstIndex - basecount);
+        await createMultiple(0, cstart, firstIndex - cstart);
       }
     }
   }
