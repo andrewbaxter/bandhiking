@@ -235,9 +235,17 @@ import {
         return;
       }
       next = resp.next;
-      for (const track of resp.tracks) {
+      for (let track of resp.tracks) {
         track.json = JSON.parse(track.json);
+        const found = await db.get(dbName, track.id);
+        if (found !== undefined) {
+          if (found.playedAt !== undefined) {
+            continue;
+          }
+          track = found;
+        }
         yield track;
+        next = null;
       }
     }
   }
@@ -418,22 +426,14 @@ import {
       for (const { max, filter } of ranges) {
         if (max < target) continue;
         while (true) {
-          let {
+          const {
             value,
-            // eslint-disable-next-line prefer-const
             done
           }: {
             value: Track;
             done?: boolean | undefined;
           } = await filter.playlist!.next();
           if (done === true) break;
-          const found = await db.get(dbName, value.id);
-          if (found !== undefined) {
-            if (found.playedAt !== undefined) {
-              continue;
-            }
-            value = found;
-          }
           hydrate(value);
           await settings.current.set([value, filter.desc]);
           return;
@@ -450,9 +450,10 @@ import {
 
   const finishCurrent = async (): Promise<void> => {
     const t = currentTrack.value();
-    if (t === null) return;
-    t[0].track.playedAt = new Date();
-    await db.put("tracks", t[0].track);
+    if (t !== null) {
+      t[0].track.playedAt = new Date();
+      await db.put("tracks", t[0].track);
+    }
     await advance();
   };
 

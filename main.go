@@ -415,9 +415,6 @@ func main() {
 			tracks = append(tracks, track0)
 		}
 		nextpage := page + 1
-		if len(tracks) < pagesize {
-			nextpage = 0
-		}
 		RetJSON(w, TracksRet{
 			Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v", sort, topcat, subcat, nextpage),
 			Tracks: tracks,
