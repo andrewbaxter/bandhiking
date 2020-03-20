@@ -32,6 +32,14 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 (async (): Promise<void> => {
+  type Track = {
+    id: number;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    json: any;
+    playedAt?: Date;
+    star: boolean;
+  };
+
   const dbName = "tracks";
   const dbVersion = 1;
 
@@ -56,14 +64,6 @@ import {
     blocking() {},
     terminated() {}
   });
-
-  type Track = {
-    id: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    json: any;
-    playedAt?: Date;
-    star: boolean;
-  };
 
   const trackUrl = (track: Track): string => {
     return `https://${track.json.url_hints.subdomain}.bandcamp.com/album/${track.json.url_hints.slug}`;
@@ -133,15 +133,16 @@ import {
         .store.index("played")
         .openCursor(undefined, "prev");
       if (cursor === null) return [];
-      if (start > 0) cursor = await cursor.advance(start);
       const out = [];
-      let at = 0;
+      let matchCount = 0;
       while (cursor) {
-        if (at >= count) break;
+        if (out.length >= count) break;
         const temp = cursor.value;
         if (temp.playedAt !== undefined) {
-          out.push(hydrate(temp));
-          at += 1;
+          if (matchCount >= start) {
+            out.push(hydrate(temp));
+          }
+          matchCount += 1;
         }
         cursor = await cursor.continue();
       }
@@ -152,21 +153,27 @@ import {
   const trackFavorites = new (class implements DataSource<HydratedTrack> {
     async get(start: number, count: number): Promise<HydratedTrack[]> {
       const out: HydratedTrack[] = [];
+      let matchCount = 0;
       const current = currentTrack.value();
-      if (current !== null && current[0].star.value()) out.push(current[0]);
+      if (current !== null && current[0].star.value()) {
+        if (start === 0) {
+          out.push(current[0]);
+          matchCount += 1;
+        }
+      }
       let cursor = await db
         .transaction(dbName)
         .store.index("played")
         .openCursor(undefined, "prev");
       if (cursor === null) return out;
-      if (start > 0) cursor = await cursor.advance(start);
-      let at = 0;
       while (cursor) {
-        if (at >= count) break;
+        if (out.length >= count) break;
         const v = cursor.value;
         if (v.playedAt !== undefined && v.star) {
-          out.push(hydrate(v));
-          at += 1;
+          if (matchCount >= start) {
+            out.push(hydrate(v));
+          }
+          matchCount += 1;
         }
         cursor = await cursor.continue();
       }
