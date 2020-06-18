@@ -1,4 +1,4 @@
-Get your bandhike on at <https://master-7rqtwti-medht7zc4bfoq.au.platformsh.site/>!
+Get hiking at <https://bandhiking.isandrew.com/>!
 
 # Why do you want Bandhiking?
 
