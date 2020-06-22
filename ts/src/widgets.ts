@@ -21,10 +21,15 @@ export class EWidget implements Widget {
 class ContainerWidget implements Widget {
   children: Widget[];
   w: Element;
-  constructor(tag: string, klass: string, ...children: Widget[]) {
+  constructor(
+    tag: string,
+    klass: string | Array<string>,
+    ...children: Widget[]
+  ) {
     this.children = children;
     this.w = document.createElement(tag);
-    this.w.classList.add(klass);
+    if (Array.isArray(klass)) this.w.classList.add(...klass);
+    else this.w.classList.add(klass);
     for (const child of children) {
       this.w.appendChild(child.getDOM());
     }
@@ -45,7 +50,7 @@ enum LabelMode {
   SHORT,
   ICON,
   TEXT,
-  ICONTEXT
+  ICONTEXT,
 }
 
 export class WTab implements Widget {
@@ -58,7 +63,7 @@ export class WTab implements Widget {
     text,
     labelMode = LabelMode.SHORT,
     keep = false,
-    builder
+    builder,
   }: {
     icon?: string | null;
     text: string;
@@ -148,7 +153,7 @@ const isWTab = (v: Widget): v is WTab => {
 };
 
 export const wtabs = async ({
-  tabs
+  tabs,
 }: {
   tabs: (Widget | WTab)[];
 }): Promise<WTabs> => {
@@ -180,7 +185,7 @@ class WTabs implements Widget {
       const dom = tab.getDOM();
       if (isWTab(tab)) {
         if (firstTab === null) firstTab = tab;
-        bindEvent(dom, "click", async _ => {
+        bindEvent(dom, "click", async (_) => {
           await this.select(tab);
         });
       }
@@ -231,8 +236,28 @@ export const wvbox = (...nodes: Widget[]): Widget => {
   return new ContainerWidget("div", "w_vbox", ...nodes);
 };
 
+export const wvboxTag = ({
+  tag,
+  nodes,
+}: {
+  tag: string;
+  nodes: Widget[];
+}): Widget => {
+  return new ContainerWidget("div", ["w_vbox", tag], ...nodes);
+};
+
 export const whbox = (...nodes: Widget[]): Widget => {
   return new ContainerWidget("div", "w_hbox", ...nodes);
+};
+
+export const spacer = (): HTMLDivElement => {
+  const out = document.createElement("div");
+  out.classList.add("w__space");
+  return out;
+};
+
+export const wspacer = (): Widget => {
+  return new EWidget(spacer());
 };
 
 export class WSlider implements Widget {
@@ -245,13 +270,13 @@ export class WSlider implements Widget {
     max,
     step,
     text,
-    bind
+    bind,
   }: {
     icon?: string | null;
     min: number;
     max: number;
     step: number;
-    text: string;
+    text?: string | null;
     bind: ChainAnchor<number>;
   }) {
     const input = document.createElement("input");
@@ -260,7 +285,7 @@ export class WSlider implements Widget {
     input.max = "" + max;
     input.step = "" + step;
     this.bindListener = new Listener<number>(
-      text,
+      text === null ? "?slider" : text!,
       bind,
       async (v: number): Promise<void> => {
         input.value = "" + v;
@@ -268,18 +293,20 @@ export class WSlider implements Widget {
     );
     this.bind = bind;
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
-    bindEvent(input, "input", async _ => {
+    bindEvent(input, "input", async (_) => {
       await bind.set(parseFloat(input.value));
     });
     if (icon !== null) {
       const image = document.createElement("img");
       image.src = icon;
-      image.alt = text;
+      if (text !== null) image.alt = text!;
       this.dom = hdiv(image, input);
-    } else {
+    } else if (text !== null) {
       const label = document.createElement("label");
-      label.textContent = text;
+      label.textContent = text!;
       this.dom = hdiv(label, input);
+    } else {
+      this.dom = hdiv(input);
     }
     this.dom.classList.add("w_slider");
   }
@@ -294,7 +321,7 @@ export class WSlider implements Widget {
 export const wbutton = ({
   icon = null,
   text,
-  action
+  action,
 }: {
   icon?: string | null;
   text: string;
@@ -311,7 +338,7 @@ export const wbutton = ({
     out.textContent = text;
   }
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  bindEvent(out, "click", _ => action());
+  bindEvent(out, "click", (_) => action());
   out.classList.add("w_button");
   return new EWidget(out);
 };
@@ -323,7 +350,7 @@ export class WToggleButton implements Widget {
   constructor({
     klass,
     text,
-    bind
+    bind,
   }: {
     klass: string;
     text: string;
@@ -342,7 +369,8 @@ export class WToggleButton implements Widget {
       }
     );
     this.bind = bind;
-    bindEvent(check, "change", async _ => {
+    check.addEventListener("click", (e) => e.stopPropagation());
+    bindEvent(check, "change", async (_) => {
       await bind.set(check.checked);
     });
     this.dom = hdiv(check, text0);
@@ -366,6 +394,12 @@ export interface DataSource<T> {
 type ListElement = {
   index: number;
   w: Widget;
+};
+
+export const whbar = (): Widget => {
+  const out = div();
+  out.classList.add("w__hbar");
+  return new EWidget(out);
 };
 
 export const wtext = (text: string): Widget => {
@@ -401,7 +435,7 @@ export class WBindText<T> implements Widget {
 
 export const wbindList = async <T>({
   source,
-  create
+  create,
 }: {
   source: DataSource<T>;
   create: (e: T) => Widget;
@@ -422,7 +456,7 @@ class WBindList<T> implements Widget {
   source: DataSource<T>;
   constructor({
     source,
-    create
+    create,
   }: {
     source: DataSource<T>;
     create: (e: T) => Widget;
@@ -441,7 +475,7 @@ class WBindList<T> implements Widget {
           await this.update(false);
         }))
     );
-    bindEvent(this.div, "scroll", async _ => {
+    bindEvent(this.div, "scroll", async (_) => {
       await this.update(false);
     });
   }
@@ -461,7 +495,7 @@ class WBindList<T> implements Widget {
         nodes.push(w.getDOM());
         elements.push({
           index: cstart + i,
-          w: w
+          w: w,
         });
       }
       if (dstart >= this.elements.length) {
@@ -553,27 +587,31 @@ export class WDetailLevel implements Widget {
   openBind: ChainAnchor<boolean> | null;
   openListener: Listener<boolean> | null;
   dom: HTMLDivElement;
+  summ: Widget;
   constructor({
-    title,
     open = false,
-    children
+    summ,
+    children,
   }: {
-    title: string;
     open?: ChainAnchor<boolean> | boolean;
+    summ: Widget;
     children: Widget[];
   }) {
     this.dom = div();
     this.dom.classList.add("w_details");
-    const summ = div();
-    summ.classList.add("w_detailssummary");
-    summ.textContent = title;
-    this.dom.append(summ);
-    this.dom.append(...children.map(c => c.getDOM()));
+    this.summ = summ;
+    const sumDOM = summ.getDOM();
+    const expand = div();
+    expand.classList.add("w_expand");
+    sumDOM.insertBefore(expand, sumDOM.firstChild);
+    sumDOM.classList.add("w_detailssummary");
+    this.dom.append(sumDOM);
+    this.dom.append(...children.map((c) => c.getDOM()));
     this.children = children;
     if (typeof open === "boolean") {
       let openState = open;
       this.dom.setAttribute("open", "" + openState);
-      bindEvent(summ, "click", async _ => {
+      bindEvent(sumDOM, "click", async (_) => {
         openState = !openState;
         this.dom.setAttribute("open", "" + openState);
       });
@@ -588,7 +626,7 @@ export class WDetailLevel implements Widget {
           this.dom.setAttribute("open", "" + v);
         }
       );
-      bindEvent(summ, "click", async _ => {
+      bindEvent(sumDOM, "click", async (_) => {
         await open.set(!open.value());
       });
     }
@@ -597,6 +635,7 @@ export class WDetailLevel implements Widget {
     return this.dom;
   }
   destroy(): void {
+    this.summ.destroy();
     for (const c of this.children) c.destroy();
     if (this.openListener !== null) {
       (this.openBind as ChainAnchor<boolean>).dests.delete(this.openListener);

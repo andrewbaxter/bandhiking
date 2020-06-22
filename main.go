@@ -83,6 +83,7 @@ func main() {
 
 	platform, err := psh.NewRuntimeConfig()
 	if err == nil {
+		logrus.Infof("Found PSH config.\n")
 		listenstring = ":" + platform.Port()
 		dbstring0, err := platform.Credentials("postgresdatabase")
 		if err != nil {
@@ -138,7 +139,7 @@ func main() {
 	defer db.Close()
 	migrations := &migrate.MemoryMigrationSource{
 		Migrations: []*migrate.Migration{
-			&migrate.Migration{
+			{
 				Id: "001",
 				Up: []string{
 					"create table track (id bigint primary key, blob json)",
@@ -421,6 +422,7 @@ func main() {
 		})
 	})
 
+	logrus.Infof("Starting on %v\n", listenstring)
 	err = http.ListenAndServe(listenstring, nil)
 	if err != nil {
 		logrus.Errorf("Http server exited with error", err)

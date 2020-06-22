@@ -8,7 +8,8 @@ import {
   clean as chainClean,
   IndirectChainAnchor,
   ChainLink,
-  bindEvent
+  bindEvent,
+  ChainDest,
 } from "./chain";
 import { openDB, DBSchema } from "idb";
 import {
@@ -27,7 +28,11 @@ import {
   EWidget,
   wbindList,
   wtabs,
-  WBindText
+  WBindText,
+  wspacer,
+  spacer,
+  wtext,
+  whbar,
 } from "./widgets";
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -57,12 +62,12 @@ import {
     upgrade(db, _oldVersion, _newVersion, _transaction) {
       const objectStore = db.createObjectStore(dbName, { keyPath: "id" });
       objectStore.createIndex("played", "playedAt", {
-        unique: true /* effectively */
+        unique: true /* effectively */,
       });
     },
     blocked() {},
     blocking() {},
-    terminated() {}
+    terminated() {},
   });
 
   const trackUrl = (track: Track): string => {
@@ -79,6 +84,10 @@ import {
 
   const trackArtUrl = (track: Track): string => {
     return `https://f4.bcbits.com/img/${track.json.type}${track.json.art_id}_42.jpg`;
+  };
+
+  const trackArtUrlLarge = (track: Track): string => {
+    return `https://f4.bcbits.com/img/${track.json.type}${track.json.art_id}_2.jpg`;
   };
 
   const trackPlayerUrl = (track: Track): string => {
@@ -119,7 +128,7 @@ import {
     if (out === undefined) {
       out = {
         track: t,
-        star: new DBSetting(dbName, t, "star")
+        star: new DBSetting(dbName, t, "star"),
       };
       hydratedTracks.set(t.id, out);
     }
@@ -210,7 +219,7 @@ import {
   const settings = {
     volume: new Setting<number>("volume", 1.0),
     current: new Setting<[Track, string] | null>("track", null),
-    filters: new Array<Filter>()
+    filters: new Array<Filter>(),
   };
 
   const currentTrack = new (class extends ChainLink<
@@ -271,7 +280,7 @@ import {
     sub: Array<{ value: string; norm_name: string; name: string }>;
   }> = await (await fetch("/api/genres")).json();
 
-  constantOrders.forEach(order => {
+  constantOrders.forEach((order) => {
     const orderId = "filter/" + order.value;
     const orderDesc = order.name;
     settings.filters.push({
@@ -281,7 +290,7 @@ import {
       on: new Setting<boolean>(orderId + ".on", order.value === "top"),
       ratio: new Setting<number>(orderId, 1.0),
       playlist: null,
-      children: constantGenres.map(genre => {
+      children: constantGenres.map((genre) => {
         const genreId = orderId + "/" + genre.value;
         const genreDesc = orderDesc + " / " + genre.name;
         const out = {
@@ -291,7 +300,7 @@ import {
           on: new Setting<boolean>(genreId + ".on", true),
           ratio: new Setting<number>(genreId, 1.0),
           playlist: null,
-          children: genre.sub.map(subgenre => {
+          children: genre.sub.map((subgenre) => {
             const subgenreId = genreId + "/" + subgenre.value;
             const subgenreDesc = genreDesc + " / " + subgenre.name;
             return {
@@ -305,9 +314,9 @@ import {
                 genre.value,
                 subgenre.value
               ),
-              children: []
+              children: [],
             };
-          })
+          }),
         };
         const allId = genreId + "/all.on";
         out.children.splice(0, 0, {
@@ -317,10 +326,10 @@ import {
           on: new Setting<boolean>(allId, true),
           ratio: new Setting<number>(genreId + "/all", 1.0),
           playlist: genreTrackRequester(order.value, genre.value, "all"),
-          children: []
+          children: [],
         });
         return out;
-      })
+      }),
     });
   });
 
@@ -340,7 +349,7 @@ import {
       this.frame.style.maxWidth = "100%";
       this.frame.style.height = "470px";
       this.frame.setAttribute("seamless", "");
-      bindEvent(this.frame, "load", async _ => {
+      bindEvent(this.frame, "load", async (_) => {
         interface X extends Window {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           HTML5Player: any;
@@ -348,7 +357,7 @@ import {
         const player = (this.frame.contentWindow! as X).HTML5Player;
         const oldChangeState = player.prototype._changestate;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        player.prototype._changestate = function(newstate: string): any {
+        player.prototype._changestate = function (newstate: string): any {
           const volListener = new Listener<number>(
             "player;volume",
             settings.volume,
@@ -371,7 +380,7 @@ import {
         const artarea = this.frame.contentWindow!.document.getElementById(
           "artarea"
         )!;
-        artarea.addEventListener("click", _ => {
+        artarea.addEventListener("click", (_) => {
           playBlocked = false;
         });
         if (!playBlocked) artarea.click();
@@ -435,7 +444,7 @@ import {
         while (true) {
           const {
             value,
-            done
+            done,
           }: {
             value: Track;
             done?: boolean | undefined;
@@ -470,6 +479,7 @@ import {
     img.alt = alt;
     const a = document.createElement("a");
     a.href = href;
+    a.target = "_blank";
     a.append(img);
     a.classList.add("w_imagelink");
     return new EWidget(a);
@@ -483,6 +493,7 @@ import {
     constructor(track: HydratedTrack) {
       const title = document.createElement("a");
       title.href = trackUrl(track.track);
+      title.target = "_blank";
       title.textContent = `${trackArtist(track.track)} - ${trackName(
         track.track
       )}`;
@@ -494,9 +505,21 @@ import {
       this.toggle = new WToggleButton({
         klass: "star_check",
         text: "Star",
-        bind: track.star
+        bind: track.star,
       });
-      this.dom = hdiv(image.getDOM(), vdiv(title, this.toggle.getDOM()));
+      const dateText = document.createElement("div");
+      dateText.classList.add("date");
+      dateText.textContent = track.track.playedAt!.toLocaleDateString();
+      const timeText = document.createElement("div");
+      timeText.classList.add("time");
+      timeText.textContent = track.track.playedAt!.toLocaleTimeString();
+      this.dom = hdiv(
+        image.getDOM(),
+        vdiv(
+          title,
+          tag("tool", hdiv(dateText, timeText, spacer(), this.toggle.getDOM()))
+        )
+      );
       this.dom.classList.add("trcklistelement");
     }
     getDOM(): Element {
@@ -509,48 +532,100 @@ import {
 
   const settingsTree = (at: Filter): Widget => {
     if (at.children.length === 0) {
-      return whbox(
-        new WToggleButton({ klass: "enabled", text: "enabled", bind: at.on }),
-        new WSlider({
-          text: at.name,
-          min: 0,
-          max: 1,
-          step: 0.01,
-          bind: at.ratio
-        })
+      return wtag(
+        "detail",
+        whbox(
+          new WToggleButton({ klass: "enabled", text: "enabled", bind: at.on }),
+          wtext(at.name),
+          new WSlider({
+            min: 0,
+            max: 1,
+            step: 0.01,
+            bind: at.ratio,
+          })
+        )
       );
     } else {
       return new WDetailLevel({
-        title: at.name,
         open: new Setting("settingopen/" + at.id, at.id === "setting/top"),
+        summ: whbox(
+          new WToggleButton({
+            klass: "enabled",
+            text: "enabled",
+            bind: at.on,
+          }),
+          wtext(at.name)
+        ),
         children: [
-          whbox(
-            new WToggleButton({
-              klass: "enabled",
-              text: "enabled",
-              bind: at.on
-            }),
-            wtag(
-              "combined",
-              new WSlider({
-                text: "combined",
-                min: 0,
-                max: 1,
-                step: 0.01,
-                bind: at.ratio
+          whbar(),
+          new WSlider({
+            min: 0,
+            max: 1,
+            step: 0.01,
+            bind: at.ratio,
+          }),
+          wtag(
+            "tool",
+            whbox(
+              wbutton({
+                icon: "check-box-multiple-outline.svg",
+                text: "All on",
+                action: async () => {
+                  for (const child of at.children) {
+                    await child.on.set(true);
+                  }
+                },
+              }),
+              wbutton({
+                icon: "checkbox-multiple-blank-outline.svg",
+                text: "All off",
+                action: async () => {
+                  for (const child of at.children) {
+                    await child.on.set(false);
+                  }
+                },
               })
             )
           ),
-          ...at.children.map(settingsTree)
-        ]
+          ...at.children.map(settingsTree),
+        ],
       });
     }
+  };
+
+  const tag = (tag: string, w: HTMLElement): HTMLElement => {
+    w.classList.add(tag);
+    return w;
   };
 
   const wtag = (tag: string, w: Widget): Widget => {
     w.getDOM().classList.add(tag);
     return w;
   };
+
+  const helpText = new (class implements Widget {
+    dom: HTMLDivElement;
+    constructor(paras: Array<string>) {
+      this.dom = document.createElement("div");
+      for (const x of paras) {
+        const xel = document.createElement("p");
+        xel.textContent = x;
+        this.dom.appendChild(xel);
+      }
+      this.dom.style.display = "none";
+    }
+    getDOM(): Element {
+      return this.dom;
+    }
+    destroy(): void {
+      this.dom.remove();
+    }
+  })([
+    "Change how Bandhiking selects music to play.  Note that these changes won't affect anything until you advance to the next track.",
+    "Unchecking a genre will disable all of the subgenres.  Checking a genre will cause the individual subgenres' checkboxes to be used.",
+    "The sliders control the chance for a checked genre/subgenre to be played.  For example, if subgenre A's slider is at 1/2 and B's is at full, the next track is twice as likely to be B.",
+    "Note that if 3 subgenres from genre A are checked and just \"All\" from genre B, if all their sliders are at full B only has a 1/4 chance of being played next.  To make A and B played equally you'll have to reduce the sliders for each of A's subgenres.",
+  ]);
 
   wroot(
     wtag(
@@ -573,7 +648,7 @@ import {
                   player,
                   wtag(
                     "info",
-                    new WBindText("player;from", currentTrack, t =>
+                    new WBindText("player;from", currentTrack, (t) =>
                       t !== null ? "From: " + t[1] : ""
                     )
                   ),
@@ -586,14 +661,14 @@ import {
                         min: 0,
                         max: 1,
                         step: 0.01,
-                        bind: settings.volume
+                        bind: settings.volume,
                       }),
                       wbutton({
                         icon: "skip-next.svg",
                         text: "Skip",
                         action: async () => {
                           await finishCurrent();
-                        }
+                        },
                       }),
                       new WToggleButton({
                         klass: "star_check",
@@ -609,13 +684,13 @@ import {
                               return new ValueChainAnchor(false);
                             return track[0].star;
                           }
-                        })("main;star", [currentTrack])
+                        })("main;star", [currentTrack]),
                       })
                     )
                   )
                 )
               );
-            }
+            },
           }),
           new WTab({
             icon: "history.svg",
@@ -623,9 +698,9 @@ import {
             builder: (): Promise<Widget> => {
               return wbindList({
                 source: trackHistory,
-                create: (v): Widget => new TrackListElement(v)
+                create: (v): Widget => new TrackListElement(v),
               });
-            }
+            },
           }),
           new WTab({
             icon: "star-outline.svg",
@@ -633,21 +708,53 @@ import {
             builder: (): Promise<Widget> => {
               return wbindList({
                 source: trackFavorites,
-                create: (v): Widget => new TrackListElement(v)
+                create: (v): Widget => new TrackListElement(v),
               });
-            }
+            },
           }),
           new WTab({
             icon: "cog.svg",
             text: "Settings",
             builder: async (): Promise<Widget> => {
               return wtag(
-                "settings",
-                wvbox(...settings.filters.map(settingsTree))
+                "settings-outer",
+                wvbox(
+                  wtag(
+                    "tool",
+                    whbox(
+                      wimageLink(
+                        "gitlab.svg",
+                        "Source",
+                        "https://gitlab.com/rendaw/bandhiking"
+                      ),
+                      wspacer(),
+                      new WToggleButton({
+                        klass: "help",
+                        text: "Help",
+                        bind: new (class implements ChainAnchor<boolean> {
+                          v: boolean;
+                          constructor() {
+                            this.v = false;
+                            this.dests = new Set();
+                          }
+                          async set(value: boolean): Promise<void> {
+                            helpText.dom.style.display = value ? "" : "none";
+                          }
+                          dests: Set<ChainDest>;
+                          value(): boolean {
+                            return this.v;
+                          }
+                        })(),
+                      })
+                    )
+                  ),
+                  helpText,
+                  wtag("settings", wvbox(...settings.filters.map(settingsTree)))
+                )
               );
-            }
-          })
-        ]
+            },
+          }),
+        ],
       })
     )
   );
