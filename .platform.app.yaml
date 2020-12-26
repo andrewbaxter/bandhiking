@@ -24,8 +24,6 @@ mounts:
 # The left-hand side is the name of the relationship as it will be exposed
 # to the application in the PLATFORM_RELATIONSHIPS variable. The right-hand
 # side is in the form '<service name>:<endpoint name>'.
-relationships:
-    postgresdatabase: 'dbpostgres:postgresql'
 
 
 hooks:
