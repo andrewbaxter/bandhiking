@@ -22,7 +22,6 @@ import (
 	pshsql "github.com/platformsh/config-reader-go/v2/libpq"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/net/html"
 )
 
 type sorts []sort
@@ -48,27 +47,10 @@ type subgenre struct {
 	Name     string `json:"name"`
 }
 
-func searchAttr(vals *[]html.Attribute, test func(v *html.Attribute) bool) *html.Attribute {
-	for _, v := range *vals {
-		if test(&v) {
-			return &v
-		}
-	}
-	return nil
-}
-
 type track struct {
-	ID   int64  `json:"id"`
-	Blob string `json:"json"`
-}
-
-type genreRank struct {
-	date      time.Time
-	sort      string
-	primary   string
-	secondary string
-	rank      int32
-	track     int64
+	ID       int64  `json:"id"`
+	Blob     string `json:"json"`
+	LastSeen time.Time
 }
 
 func main() {
@@ -108,7 +90,7 @@ func main() {
 	{
 		data, err := ioutil.ReadFile("./sorts.json")
 		if err != nil {
-			logrus.Fatalf("Failed to load sorts file", err)
+			logrus.Fatalf("Failed to load sorts file: %s", err)
 			return
 		}
 		err = json.Unmarshal(data, &sorts)
@@ -121,7 +103,7 @@ func main() {
 	{
 		data, err := ioutil.ReadFile("./genres.json")
 		if err != nil {
-			logrus.Fatalf("Failed to load genre file", err)
+			logrus.Fatalf("Failed to load genre file: %s", err)
 			return
 		}
 		err = json.Unmarshal(data, &genres)
@@ -147,19 +129,53 @@ func main() {
 				},
 				Down: []string{"DROP TABLE track", "DROP TABLE genreRank"},
 			},
+			{
+				Id: "002",
+				Up: []string{
+					"delete from genreRank where date < '2020-10-03 00:00:00'",
+					"create table countryRank (date timestamp, \"primary\" text, sort text, rank integer, track bigint, primary key (\"primary\", sort, date, rank))",
+					"alter table track add column lastSeen timestamp default '2020-12-26 00:00:00'",
+				},
+				Down: []string{},
+			},
 		},
 	}
+	logrus.Tracef("Starting db migrations")
 	_, err = migrate.Exec(db.DB, "postgres", migrations, migrate.Up)
 	if err != nil {
 		logrus.Fatalf("Failed to migrate db: %+v", err)
 		return
 	}
+	logrus.Tracef("Db migrations done")
 
-	isScraping := struct {
-		scraping int32
-	}{
-		scraping: 0,
+	var countries []string
+	updateCountries := func() {
+		countries = []string{}
+		rows, err := db.Queryx(
+			"select count(*) as card, \"primary\" from countryRank group by \"primary\" order by card desc limit 50",
+		)
+		if err != nil {
+			logrus.Errorf("Failed to query countries: %+v", err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row struct {
+				Card    int
+				Primary string
+			}
+			err = rows.StructScan(&row)
+			if err != nil {
+				logrus.Errorf("Failed to scan country count result: %+v", err)
+				return
+			}
+			countries = append(countries, row.Primary)
+		}
 	}
+
+	updateCountries()
+
+	var isScraping int32
 
 	myhttp := resty.New()
 	myhttp.SetHeader("User-Agent", "https://gitlab.com/rendaw/bandhiking")
@@ -170,22 +186,50 @@ func main() {
 			return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 		}
 		date := BeginningOfDay(time.Now())
+
+		logrus.Tracef("Deleting old data, %v", date)
+
+		pruneLimit := date.AddDate(0, -2, 0)
+		_, err = db.Exec(
+			"delete from genreRank where date < $1",
+			pruneLimit,
+		)
+		if err != nil {
+			logrus.Errorf("Failed to prune genreRank; %+v", err)
+		}
+		_, err = db.Exec(
+			"delete from countryRank where date < $1",
+			pruneLimit,
+		)
+		if err != nil {
+			logrus.Errorf("Failed to prune countryRank; %+v", err)
+		}
+		_, err = db.Exec(
+			"delete from track where lastSeen < $1",
+			pruneLimit,
+		)
+		if err != nil {
+			logrus.Errorf("Failed to prune tracks; %+v", err)
+		}
+
 		logrus.Tracef("Starting scrape, %v", date)
 
-		type GenreState struct {
-			Done bool
-			Rank int
-			Page int
+		type ScrapeState struct {
+			Done        bool
+			GenreRank   int
+			CountryRank int
+			Page        int
 		}
-		pages := map[string]*GenreState{}
+		pages := map[string]*ScrapeState{}
 
 		rankpage := func(stateKey string, url string, sort string, topcat string, subcat string) bool {
 			state, ok := pages[stateKey]
 			if !ok {
-				state = &GenreState{
-					Done: false,
-					Rank: 0,
-					Page: 0,
+				state = &ScrapeState{
+					Done:        false,
+					GenreRank:   0,
+					CountryRank: 0,
+					Page:        0,
 				}
 				pages[stateKey] = state
 			}
@@ -193,7 +237,8 @@ func main() {
 				return false
 			}
 			url = fmt.Sprintf(url, state.Page)
-			rank := state.Rank
+			genreRank := state.GenreRank
+			countryRank := state.CountryRank
 			logrus.Tracef("Fetching %v", url)
 			res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
 			if err != nil {
@@ -224,35 +269,61 @@ func main() {
 				}
 				trackID := int64(trackID0.(float64))
 				_, err = db.Exec(
-					"insert into track (id, blob) values ($1, $2) on conflict (id) do nothing",
+					"insert into track (id, blob, lastSeen) values ($1, $2, $3) on conflict (id) do update set lastSeen = $3",
 					trackID,
 					bytes,
+					date,
 				)
 				if err != nil {
 					logrus.Errorf("Failed to create track record; %+v", err)
 					return true
 				}
+
+				// Genre rank
 				_, err = db.Exec(
 					"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6) on conflict (\"primary\", secondary, sort, date, rank) do nothing",
 					date,
 					topcat,
 					subcat,
 					sort,
-					int32(rank),
+					int32(genreRank),
 					trackID,
 				)
 				if err != nil {
 					logrus.Errorf("Failed to create track rank record; %+v", err)
 					return true
 				}
-				rank++
+				genreRank++
+
+				// Country rank
+				locationRaw := trackdata.S("location_text")
+				if locationRaw.Data() != nil {
+					location := strings.Split(locationRaw.Data().(string), ", ")
+					if len(location) > 1 {
+						country := location[1]
+						_, err = db.Exec(
+							"insert into countryRank (date, \"primary\", sort, rank, track) values ($1, $2, $3, $4, $5) on conflict (\"primary\", sort, date, rank) do nothing",
+							date,
+							country,
+							sort,
+							int32(countryRank),
+							trackID,
+						)
+						if err != nil {
+							logrus.Errorf("Failed to create country rank record; %+v", err)
+							return true
+						}
+						countryRank++
+					}
+				}
 			}
 
 			state.Page++
-			if rank == state.Rank {
+			if genreRank == state.GenreRank {
 				state.Done = true
 			}
-			state.Rank = rank
+			state.GenreRank = genreRank
+			state.CountryRank = countryRank
 
 			return true
 		}
@@ -289,17 +360,18 @@ func main() {
 				}
 			}
 		}
+		updateCountries()
 	}
 	scrape := func() {
-		if !atomic.CompareAndSwapInt32(&isScraping.scraping, 0, 1) {
+		if !atomic.CompareAndSwapInt32(&isScraping, 0, 1) {
 			logrus.Infof("New scrape aborted; already scraping")
 			return
 		}
 		scrapeInner()
-		atomic.StoreInt32(&isScraping.scraping, 0)
+		atomic.StoreInt32(&isScraping, 0)
 	}
 	mycron := cron.New()
-	mycron.AddFunc("@daily", scrape)
+	_ = mycron.AddFunc("@daily", scrape)
 	mycron.Start()
 
 	static := http.FileServer(http.Dir("./static"))
@@ -330,12 +402,16 @@ func main() {
 		RetJSON(w, genres)
 	})
 
+	http.HandleFunc("/api/countries", func(w http.ResponseWriter, req *http.Request) {
+		RetJSON(w, countries)
+	})
+
 	embedPrefix := "/api/embed/"
 	http.HandleFunc(embedPrefix, func(w http.ResponseWriter, req *http.Request) {
 		path := strings.TrimPrefix(req.URL.Path, embedPrefix)
 		keys := strings.Split(path, "~~~")
 		if len(keys) == 1 {
-			logrus.Errorf("Trying to proxy non-html", req.URL)
+			logrus.Errorf("Trying to proxy non-html: %s", req.URL)
 			w.WriteHeader(400)
 			return
 		}
@@ -359,7 +435,7 @@ func main() {
 			w.WriteHeader(500)
 			return
 		}
-		w.Write(bytes)
+		_, _ = w.Write(bytes)
 	})
 
 	http.HandleFunc("/api/genrerank/", func(w http.ResponseWriter, req *http.Request) {
@@ -422,10 +498,69 @@ func main() {
 		})
 	})
 
+	http.HandleFunc("/api/countryrank/", func(w http.ResponseWriter, req *http.Request) {
+		var err error
+		type ErrorRet struct {
+			Error string `json:"error"`
+		}
+		RetE := func(e string) {
+			RetJSON(w, ErrorRet{
+				Error: e,
+			})
+		}
+		type TracksRet struct {
+			Next   string  `json:"next"`
+			Tracks []track `json:"tracks"`
+		}
+		splits := strings.Split(req.URL.Path, "/")[3:]
+		if len(splits) < 2 {
+			RetE("Not enough key params")
+			return
+		}
+		sort, topcat := splits[0], splits[1]
+		page := 0
+		if len(splits) == 3 {
+			got, err := strconv.Atoi(splits[3])
+			if err == nil {
+				page = int(got)
+			}
+		}
+		pagesize := 100
+		rows, err := db.Queryx(
+			"select track.* from countryRank left join track on countryRank.track = track.id where sort = $1 and \"primary\" = $2 order by date desc, rank desc offset $3 limit $4",
+			sort,
+			topcat,
+			page*pagesize,
+			pagesize,
+		)
+		if err != nil {
+			logrus.Errorf("Failed to query country ranks: %+v", err)
+			RetE("Internal error")
+			return
+		}
+		defer rows.Close()
+		tracks := []track{}
+		for rows.Next() {
+			var track0 track
+			err = rows.StructScan(&track0)
+			if err != nil {
+				logrus.Errorf("Failed to scan country rank track result: %+v", err)
+				RetE("Internal error")
+				return
+			}
+			tracks = append(tracks, track0)
+		}
+		nextpage := page + 1
+		RetJSON(w, TracksRet{
+			Next:   fmt.Sprintf("/api/countryrank/%v/%v/%v", sort, topcat, nextpage),
+			Tracks: tracks,
+		})
+	})
+
 	logrus.Infof("Starting on %v\n", listenstring)
 	err = http.ListenAndServe(listenstring, nil)
 	if err != nil {
-		logrus.Errorf("Http server exited with error", err)
+		logrus.Errorf("Http server exited with error: %s", err)
 	}
 	logrus.Tracef("The end")
 }

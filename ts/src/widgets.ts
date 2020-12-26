@@ -441,7 +441,7 @@ export const wbindList = async <T>({
   create: (e: T) => Widget;
 }): Promise<WBindList<T>> => {
   const out = new WBindList({ source: source, create: create });
-  await out.update(false);
+  out.update();
   return out;
 };
 
@@ -451,6 +451,8 @@ class WBindList<T> implements Widget {
   // Up to 2X before/after offscreen
   elements: ListElement[];
   div: HTMLDivElement;
+  pendingUpdates: number;
+  updatePromise: Promise<any> | null;
   resizeListener: (e: Event) => void;
   createElement: (e: T) => Widget;
   source: DataSource<T>;
@@ -464,6 +466,8 @@ class WBindList<T> implements Widget {
     this.div = div();
     this.div.classList.add("w_list");
     this.div.style.overflowY = "auto";
+    this.pendingUpdates = 0;
+    this.updatePromise = null;
     this.elements = [];
     this.createElement = create;
     this.source = source;
@@ -472,21 +476,20 @@ class WBindList<T> implements Widget {
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       (this.resizeListener = (_): Promise<void> =>
         event(async () => {
-          await this.update(false);
+          this.update();
         }))
     );
     bindEvent(this.div, "scroll", async (_) => {
-      await this.update(false);
+      this.update();
     });
   }
 
-  async update(isRetry: boolean): Promise<void> {
-    const createMultiple = async (
-      dstart: number,
-      cstart: number,
+  async updateInner(): Promise<void> {
+    const getAndPrep = async (
+      startIndex: number,
       count: number
-    ): Promise<void> => {
-      const newData = await this.source.get(cstart, count);
+    ): Promise<[Element[], ListElement[]]> => {
+      const newData = await this.source.get(startIndex, count);
       const nodes: Element[] = [];
       const elements: ListElement[] = [];
       for (let i = 0; i < newData.length; ++i) {
@@ -494,23 +497,23 @@ class WBindList<T> implements Widget {
         const w = this.createElement(e);
         nodes.push(w.getDOM());
         elements.push({
-          index: cstart + i,
+          index: startIndex + i,
           w: w,
         });
       }
-      if (dstart >= this.elements.length) {
-        this.div.append(...nodes);
-      } else {
-        const ref = this.elements[dstart].w.getDOM();
-        for (let i = 0; i < newData.length; ++i) {
-          this.div.insertBefore(nodes[i], ref);
-        }
-      }
-      this.elements.splice(dstart, 0, ...elements);
+      return [nodes, elements];
     };
 
-    const removeMultiple = (dstart: number, count: number): void => {
-      const removed = this.elements.splice(dstart, count);
+    const removeIndexRange = (startIndex: number, endIndex: number): void => {
+      let removed: ListElement[] = [];
+      this.elements = this.elements.filter((e) => {
+        if (e.index < startIndex || e.index > endIndex) {
+          return true;
+        } else {
+          removed.push(e);
+          return false;
+        }
+      });
       for (const e of removed) {
         e.w.getDOM().remove();
         e.w.destroy();
@@ -518,16 +521,18 @@ class WBindList<T> implements Widget {
     };
 
     if (this.elements.length === 0) {
-      await createMultiple(0, 0, 60);
-      if (!isRetry)
-        setTimeout(
-          // eslint-disable-next-line @typescript-eslint/no-misused-promises
-          () =>
-            event(async () => {
-              await this.update(true);
-            }),
-          1
-        );
+      const [nodes, elements] = await getAndPrep(0, 60);
+      this.div.append(...nodes);
+      this.elements.push(...elements);
+      // Redo in a second after things are properly layed out
+      setTimeout(
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises
+        () =>
+          event(async () => {
+            await this.update();
+          }),
+        1
+      );
     } else {
       const box = this.div.getBoundingClientRect();
       let firstVisibleIndex = 0;
@@ -548,34 +553,59 @@ class WBindList<T> implements Widget {
       const usedCount = lastVisible[0].index - firstVisible[0].index;
       const visibleUsed = lastVisible[1].bottom - firstVisible[1].top;
       const visibleAvailable = box.bottom - box.top;
-      const basecount = Math.ceil(visibleAvailable / (visibleUsed / usedCount));
-      const removeThreshold = basecount * 1.5;
+      const screenworth = Math.ceil(
+        visibleAvailable / (visibleUsed / usedCount)
+      );
+      const removeThreshold = screenworth * 2;
       const firstIndex = this.elements[0].index;
       const lastIndex = this.elements[this.elements.length - 1].index;
 
-      const needAfterEnd = firstVisibleIndex + basecount * 1.5;
-      const needAfter = needAfterEnd - lastIndex;
-      if (-needAfter > removeThreshold) {
-        const excess = -needAfter - removeThreshold;
-        removeMultiple(this.elements.length - excess, excess);
-      } else if (needAfter > 0) {
-        await createMultiple(this.elements.length, lastIndex + 1, basecount);
+      const needEnd = firstVisibleIndex + screenworth * 2;
+      const needEndMissing = needEnd - lastIndex;
+      if (-needEndMissing > removeThreshold) {
+        removeIndexRange(needEnd + removeThreshold, lastIndex);
+      } else if (needEndMissing > 0) {
+        const [nodes, elements] = await getAndPrep(lastIndex + 1, screenworth);
+        this.div.append(...nodes);
+        this.elements.splice(this.elements.length, 0, ...elements);
       }
 
-      const needBeforeStart = Math.max(0, firstVisibleIndex - basecount * 0.5);
-      const needBefore = firstIndex - needBeforeStart;
-      if (-needBefore > removeThreshold) {
-        const excess = -needBefore - removeThreshold;
-        removeMultiple(0, excess);
-      } else if (needBefore > 0) {
-        const cstart = Math.max(0, firstIndex - basecount);
-        await createMultiple(0, cstart, firstIndex - cstart);
+      /*
+      // Removed: Messes with scrolling, need some workaround
+      const needStart = Math.max(0, firstVisibleIndex - screenworth * 0.5);
+      const needStartMissing = firstIndex - needStart;
+      if (-needStartMissing > removeThreshold) {
+        removeIndexRange(0, needStart - removeThreshold);
+      } else if (needStartMissing > 0) {
+        const cstart = Math.max(0, firstIndex - screenworth);
+        const [nodes, elements] = await getAndPrep(cstart, firstIndex - cstart);
+        const ref = this.div.childNodes.item(0);
+        for (let x of nodes) {
+          this.div.insertBefore(x, ref);
+        }
+        this.elements.splice(0, 0, ...elements);
       }
+      */
+    }
+    this.pendingUpdates -= 1;
+    if (this.pendingUpdates == 0) {
+      this.updatePromise = null;
     }
   }
+
+  update() {
+    if (this.pendingUpdates == 0) {
+      this.updatePromise = this.updateInner();
+    } else {
+      this.updatePromise = this.updatePromise!.then((_) => this.updateInner());
+    }
+    this.pendingUpdates += 1;
+  }
+
   getDOM(): Element {
     return this.div;
   }
+
   destroy(): void {
     for (const e of this.elements) e.w.destroy();
     window.removeEventListener("resize", this.resizeListener);

@@ -265,11 +265,45 @@ import {
       }
     }
   }
+  async function* countryTrackRequester(
+    sort: string,
+    country: string
+  ): AsyncIterator<Track> {
+    let next = null;
+    while (true) {
+      const url =
+        next === null ? "/api/countryrank/" + sort + "/" + country : next;
+      const resp: { next: string; tracks: Array<Track> } = await (
+        await fetch(url)
+      ).json();
+      if (resp.tracks.length === 0) {
+        console.log("No more tracks found for country rank", sort, country);
+        return;
+      }
+      next = resp.next;
+      for (let track of resp.tracks) {
+        track.json = JSON.parse(track.json);
+        const found = await db.get(dbName, track.id);
+        if (found !== undefined) {
+          if (found.playedAt !== undefined) {
+            continue;
+          }
+          track = found;
+        }
+        yield track;
+        next = null;
+      }
+    }
+  }
 
   const constantOrders: Array<{
     name: string;
     value: string;
   }> = await (await fetch("/api/sorts")).json();
+  const dynamicCountries: Array<string> = await (
+    await fetch("/api/countries")
+  ).json();
+
   const constantGenres: Array<{
     value: string;
     // eslint-disable-next-line camelcase
@@ -279,7 +313,6 @@ import {
     // eslint-disable-next-line camelcase
     sub: Array<{ value: string; norm_name: string; name: string }>;
   }> = await (await fetch("/api/genres")).json();
-
   constantOrders.forEach((order) => {
     const orderId = "filter/" + order.value;
     const orderDesc = order.name;
@@ -290,46 +323,63 @@ import {
       on: new Setting<boolean>(orderId + ".on", order.value === "top"),
       ratio: new Setting<number>(orderId, 1.0),
       playlist: null,
-      children: constantGenres.map((genre) => {
-        const genreId = orderId + "/" + genre.value;
-        const genreDesc = orderDesc + " / " + genre.name;
-        const out = {
-          id: genreId,
-          name: genre.name,
-          desc: genreDesc,
-          on: new Setting<boolean>(genreId + ".on", true),
-          ratio: new Setting<number>(genreId, 1.0),
-          playlist: null,
-          children: genre.sub.map((subgenre) => {
-            const subgenreId = genreId + "/" + subgenre.value;
-            const subgenreDesc = genreDesc + " / " + subgenre.name;
-            return {
-              id: subgenreId,
-              name: subgenre.name,
-              desc: subgenreDesc,
-              on: new Setting<boolean>(subgenreId + ".on", false),
-              ratio: new Setting<number>(subgenreId, 1.0),
-              playlist: genreTrackRequester(
-                order.value,
-                genre.value,
-                subgenre.value
-              ),
+      children: constantGenres
+        .map((genre) => {
+          const genreId = orderId + "/" + genre.value;
+          const genreDesc = orderDesc + " / " + genre.name;
+          const out: Filter = {
+            id: genreId,
+            name: genre.name,
+            desc: genreDesc,
+            on: new Setting<boolean>(genreId + ".on", true),
+            ratio: new Setting<number>(genreId, 1.0),
+            playlist: null,
+            children: genre.sub.map((subgenre) => {
+              const subgenreId = genreId + "/" + subgenre.value;
+              const subgenreDesc = genreDesc + " / " + subgenre.name;
+              return {
+                id: subgenreId,
+                name: subgenre.name,
+                desc: subgenreDesc,
+                on: new Setting<boolean>(subgenreId + ".on", false),
+                ratio: new Setting<number>(subgenreId, 1.0),
+                playlist: genreTrackRequester(
+                  order.value,
+                  genre.value,
+                  subgenre.value
+                ),
+                children: [],
+              };
+            }),
+          };
+          const allId = genreId + "/all.on";
+          out.children.splice(0, 0, {
+            id: allId,
+            name: "all",
+            desc: genreDesc + " / all",
+            on: new Setting<boolean>(allId, true),
+            ratio: new Setting<number>(genreId + "/all", 1.0),
+            playlist: genreTrackRequester(order.value, genre.value, "all"),
+            children: [],
+          });
+          return out;
+        })
+        .concat(
+          dynamicCountries.map((country) => {
+            const countryId = orderId + "/" + country;
+            const countryDesc = orderDesc + " / " + country;
+            const out: Filter = {
+              id: countryId,
+              name: country,
+              desc: countryDesc,
+              on: new Setting<boolean>(countryId + ".on", false),
+              ratio: new Setting<number>(countryId, 1.0),
+              playlist: countryTrackRequester(order.value, country),
               children: [],
             };
-          }),
-        };
-        const allId = genreId + "/all.on";
-        out.children.splice(0, 0, {
-          id: allId,
-          name: "all",
-          desc: genreDesc + " / all",
-          on: new Setting<boolean>(allId, true),
-          ratio: new Setting<number>(genreId + "/all", 1.0),
-          playlist: genreTrackRequester(order.value, genre.value, "all"),
-          children: [],
-        });
-        return out;
-      }),
+            return out;
+          })
+        ),
     });
   });
 
