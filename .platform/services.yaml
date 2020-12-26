@@ -7,4 +7,4 @@ dbpostgres:
     # the CLI will return an error.
     type: postgresql:11
     # The disk attribute is the size of the persistent disk (in MB) allocated to the service.
-    disk: 4096
+    disk: 4192
