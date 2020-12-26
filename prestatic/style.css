@@ -229,7 +229,7 @@ p {
   background-image: url("chevron-right.svg");
 }
 
-.w_details[open="true"] > .w_expand {
+.w_details[open="true"] > .w_detailssummary > .w_expand {
   background-image: url("chevron-down.svg");
 }
 

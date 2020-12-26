@@ -614,53 +614,58 @@ class WBindList<T> implements Widget {
 
 export class WDetailLevel implements Widget {
   children: Widget[];
+  childrenGenerator: () => Widget[];
   openBind: ChainAnchor<boolean> | null;
   openListener: Listener<boolean> | null;
   dom: HTMLDivElement;
+  sumDOM: Element;
   summ: Widget;
   constructor({
-    open = false,
+    open,
     summ,
-    children,
+    childrenGenerator,
   }: {
-    open?: ChainAnchor<boolean> | boolean;
+    open: ChainAnchor<boolean>;
     summ: Widget;
-    children: Widget[];
+    childrenGenerator: () => Widget[];
   }) {
     this.dom = div();
     this.dom.classList.add("w_details");
     this.summ = summ;
-    const sumDOM = summ.getDOM();
+    this.sumDOM = summ.getDOM();
     const expand = div();
     expand.classList.add("w_expand");
-    sumDOM.insertBefore(expand, sumDOM.firstChild);
-    sumDOM.classList.add("w_detailssummary");
-    this.dom.append(sumDOM);
-    this.dom.append(...children.map((c) => c.getDOM()));
-    this.children = children;
-    if (typeof open === "boolean") {
-      let openState = open;
-      this.dom.setAttribute("open", "" + openState);
-      bindEvent(sumDOM, "click", async (_) => {
-        openState = !openState;
-        this.dom.setAttribute("open", "" + openState);
-      });
-      this.openBind = null;
-      this.openListener = null;
-    } else {
-      this.openBind = open;
-      this.openListener = new Listener<boolean>(
-        "settingdetails;open",
-        open,
-        async (v: boolean): Promise<void> => {
-          this.dom.setAttribute("open", "" + v);
-        }
-      );
-      bindEvent(sumDOM, "click", async (_) => {
-        await open.set(!open.value());
-      });
-    }
+    this.sumDOM.insertBefore(expand, this.sumDOM.firstChild);
+    this.sumDOM.classList.add("w_detailssummary");
+    this.children = [];
+    this.childrenGenerator = childrenGenerator;
+    this.openBind = open;
+    this.openListener = new Listener<boolean>(
+      "settingdetails;open",
+      open,
+      async (v: boolean): Promise<void> => {
+        this.update(v);
+      }
+    );
+    bindEvent(this.sumDOM, "click", async (_) => {
+      await open.set(!open.value());
+    });
+    this.update(open.value());
   }
+
+  update(openState: boolean) {
+    if (openState) {
+      this.dom.append(this.sumDOM);
+      this.children = this.childrenGenerator();
+      this.dom.append(...this.children.map((c) => c.getDOM()));
+    } else {
+      this.dom.innerHTML = "";
+      this.dom.append(this.sumDOM);
+      this.children = [];
+    }
+    this.dom.setAttribute("open", "" + openState);
+  }
+
   getDOM(): Element {
     return this.dom;
   }

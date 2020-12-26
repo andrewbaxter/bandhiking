@@ -606,7 +606,7 @@ import {
           }),
           wtext(at.name)
         ),
-        children: [
+        childrenGenerator: () => [
           whbar(),
           new WSlider({
             min: 0,
