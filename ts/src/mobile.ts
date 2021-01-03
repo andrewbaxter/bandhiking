@@ -33,6 +33,7 @@ import {
   spacer,
   wtext,
   whbar,
+  wvboxTag,
 } from "./widgets";
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -84,10 +85,6 @@ import {
 
   const trackArtUrl = (track: Track): string => {
     return `https://f4.bcbits.com/img/${track.json.type}${track.json.art_id}_42.jpg`;
-  };
-
-  const trackArtUrlLarge = (track: Track): string => {
-    return `https://f4.bcbits.com/img/${track.json.type}${track.json.art_id}_2.jpg`;
   };
 
   const trackPlayerUrl = (track: Track): string => {
@@ -207,19 +204,25 @@ import {
   // Model setup
   //
   type Filter = {
-    id: string;
+    id: Array<string>;
     name: string;
     desc: string;
     on: Setting<boolean>;
     ratio: Setting<number>;
     children: Array<Filter>;
-    playlist: AsyncIterator<Track> | null;
+  };
+  type CountryFilter = {
+    id: string;
+    name: string;
+    on: Setting<boolean>;
   };
 
   const settings = {
     volume: new Setting<number>("volume", 1.0),
     current: new Setting<[Track, string] | null>("track", null),
-    filters: new Array<Filter>(),
+    orderFilters: new Array<Filter>(),
+    genreFilters: new Array<Filter>(),
+    countryFilters: new Array<CountryFilter>(),
   };
 
   const currentTrack = new (class extends ChainLink<
@@ -232,11 +235,16 @@ import {
     }
   })("currentTrack", [settings.current]);
 
-  async function* genreTrackRequester(
+  const trackRequesters = new Map<string, AsyncIterator<Track>>();
+
+  async function* trackRequester(
     sort: string,
     genre: string,
-    subgenre: string
+    subgenre: string,
+    countries: Map<string, boolean>
   ): AsyncIterator<Track> {
+    const allCountries = countries.has("all");
+    const otherCountries = countries.has("other");
     let next = null;
     while (true) {
       const url =
@@ -260,35 +268,29 @@ import {
           }
           track = found;
         }
-        yield track;
-        next = null;
-      }
-    }
-  }
-  async function* countryTrackRequester(
-    sort: string,
-    country: string
-  ): AsyncIterator<Track> {
-    let next = null;
-    while (true) {
-      const url =
-        next === null ? "/api/countryrank/" + sort + "/" + country : next;
-      const resp: { next: string; tracks: Array<Track> } = await (
-        await fetch(url)
-      ).json();
-      if (resp.tracks.length === 0) {
-        console.log("No more tracks found for country rank", sort, country);
-        return;
-      }
-      next = resp.next;
-      for (let track of resp.tracks) {
-        track.json = JSON.parse(track.json);
-        const found = await db.get(dbName, track.id);
-        if (found !== undefined) {
-          if (found.playedAt !== undefined) {
+        let loc: string | undefined = track.json.location_text;
+        if (typeof loc === "string") {
+          const splits = loc.split(", ");
+          if (splits.length == 2) {
+            loc = splits[1];
+          } else {
+            loc = "";
+          }
+        } else {
+          loc = "";
+        }
+        if (allCountries) {
+          // okay - nop
+        } else {
+          const countryPresent = countries.has(loc);
+          if (!countryPresent && otherCountries) {
+            // okay - nop
+          } else if (countryPresent && countries.get(loc)) {
+            // okay - nop
+          } else {
+            // Country filtered
             continue;
           }
-          track = found;
         }
         yield track;
         next = null;
@@ -300,7 +302,7 @@ import {
     name: string;
     value: string;
   }> = await (await fetch("/api/sorts")).json();
-  const dynamicCountries: Array<string> = await (
+  const constantCountries: Array<string> = await (
     await fetch("/api/countries")
   ).json();
 
@@ -313,75 +315,79 @@ import {
     // eslint-disable-next-line camelcase
     sub: Array<{ value: string; norm_name: string; name: string }>;
   }> = await (await fetch("/api/genres")).json();
+
   constantOrders.forEach((order) => {
-    const orderId = "filter/" + order.value;
-    const orderDesc = order.name;
-    settings.filters.push({
-      id: orderId,
+    const orderSettingId = "filter/" + order.value;
+    settings.orderFilters.push({
+      id: [order.value],
       name: order.name,
-      desc: orderDesc,
-      on: new Setting<boolean>(orderId + ".on", order.value === "top"),
-      ratio: new Setting<number>(orderId, 1.0),
-      playlist: null,
-      children: constantGenres
-        .map((genre) => {
-          const genreId = orderId + "/" + genre.value;
-          const genreDesc = orderDesc + " / " + genre.name;
-          const out: Filter = {
-            id: genreId,
-            name: genre.name,
-            desc: genreDesc,
-            on: new Setting<boolean>(genreId + ".on", true),
-            ratio: new Setting<number>(genreId, 1.0),
-            playlist: null,
-            children: genre.sub.map((subgenre) => {
-              const subgenreId = genreId + "/" + subgenre.value;
-              const subgenreDesc = genreDesc + " / " + subgenre.name;
-              return {
-                id: subgenreId,
-                name: subgenre.name,
-                desc: subgenreDesc,
-                on: new Setting<boolean>(subgenreId + ".on", false),
-                ratio: new Setting<number>(subgenreId, 1.0),
-                playlist: genreTrackRequester(
-                  order.value,
-                  genre.value,
-                  subgenre.value
-                ),
-                children: [],
-              };
-            }),
-          };
-          const allId = genreId + "/all.on";
-          out.children.splice(0, 0, {
-            id: allId,
-            name: "all",
-            desc: genreDesc + " / all",
-            on: new Setting<boolean>(allId, true),
-            ratio: new Setting<number>(genreId + "/all", 1.0),
-            playlist: genreTrackRequester(order.value, genre.value, "all"),
-            children: [],
-          });
-          return out;
-        })
-        .concat(
-          dynamicCountries.map((country) => {
-            const countryId = orderId + "/" + country;
-            const countryDesc = orderDesc + " / " + country;
-            const out: Filter = {
-              id: countryId,
-              name: country,
-              desc: countryDesc,
-              on: new Setting<boolean>(countryId + ".on", false),
-              ratio: new Setting<number>(countryId, 1.0),
-              playlist: countryTrackRequester(order.value, country),
-              children: [],
-            };
-            return out;
-          })
-        ),
+      desc: order.name,
+      on: new Setting<boolean>(orderSettingId + ".on", order.value === "top"),
+      ratio: new Setting<number>(orderSettingId, 1.0),
+      children: [],
     });
   });
+  constantGenres.forEach((genre) => {
+    const genreSettingId = "filter/top/" + genre.value;
+    const genreDesc = genre.name;
+    settings.genreFilters.push({
+      id: [genre.value],
+      name: genre.name,
+      desc: genreDesc,
+      on: new Setting<boolean>(genreSettingId + ".on", true),
+      ratio: new Setting<number>(genreSettingId, 1.0),
+      children: ((): Array<Filter> => {
+        const allSettingId = genreSettingId + "/all.on";
+        return [
+          {
+            id: [genre.value, "all"],
+            name: "all",
+            desc: "all",
+            on: new Setting<boolean>(allSettingId, true),
+            ratio: new Setting<number>(allSettingId + "/all", 1.0),
+            children: [],
+          },
+        ];
+      })().concat(
+        genre.sub.map((subgenre) => {
+          const subgenreSettingId = genreSettingId + "/" + subgenre.value;
+          const subgenreDesc = genreDesc + " / " + subgenre.name;
+          return {
+            id: [genre.value, subgenre.value],
+            name: subgenre.name,
+            desc: subgenreDesc,
+            on: new Setting<boolean>(subgenreSettingId + ".on", false),
+            ratio: new Setting<number>(subgenreSettingId, 1.0),
+            children: [],
+          };
+        })
+      ),
+    });
+  });
+  {
+    const allSettingId = "filter/country/all.on";
+    settings.countryFilters.push({
+      id: "all",
+      name: "all",
+      on: new Setting<boolean>(allSettingId, true),
+    });
+  }
+  constantCountries.forEach((country) => {
+    const countryId = "filter/country/" + country;
+    settings.countryFilters.push({
+      id: country,
+      name: country,
+      on: new Setting<boolean>(countryId + ".on", country === "top"),
+    });
+  });
+  {
+    const othersSettingId = "filter/country/others.on";
+    settings.countryFilters.push({
+      id: "others",
+      name: "others",
+      on: new Setting<boolean>(othersSettingId, true),
+    });
+  }
 
   // UI setup
   //
@@ -453,6 +459,9 @@ import {
     }
   }
 
+  /**
+   * Zips constant A with stream of B to produce pair elements of [A, B]
+   */
   class CarryIterator<A, B> implements Iterable<[A, B]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     generator: Iterator<[A, B], any, undefined>;
@@ -470,48 +479,91 @@ import {
     }
   }
 
+  const weightedChoicesPush = <T extends unknown>(
+    ranges: Array<{ max: number; v: T }>,
+    weight: number,
+    v: T
+  ) => {
+    const last = ranges[ranges.length - 1];
+    const scoreSum = last == undefined ? 0 : last.max;
+    ranges.push({ max: scoreSum + weight, v: v });
+  };
+
+  const randomChoice = <T extends unknown>(
+    ranges: Array<{ max: number; v: T }>
+  ): T | null => {
+    const scoreSum = ranges[ranges.length - 1].max;
+    const target = Math.random() * scoreSum;
+    for (const { max, v } of ranges) {
+      if (max < target) continue;
+      return v;
+    }
+    return null;
+  };
+
+  const mapEnsure = <K, V>(map: Map<K, V>, key: K, supp: () => V): V => {
+    if (map.has(key)) {
+      return map.get(key)!;
+    } else {
+      const v = supp();
+      map.set(key, v);
+      return v;
+    }
+  };
+
   const advance = async (): Promise<void> => {
-    let scoreSum = 0;
-    const ranges: { max: number; filter: Filter }[] = [];
+    const weightedOrders: { max: number; v: Filter }[] = [];
+    settings.orderFilters.forEach((v) => {
+      if (!v.on.value()) return;
+      weightedChoicesPush(weightedOrders, v.ratio.value(), v);
+    });
+
+    const weightedGenres: { max: number; v: Filter }[] = [];
     await depthFirst(
-      new CarryIterator(1, settings.filters),
+      new CarryIterator(1, settings.genreFilters),
       async ([carry, filter]: [number, Filter]) => {
         if (!filter.on.value()) return [][Symbol.iterator]();
         const scaledRatio = carry * filter.ratio.value();
-        if (filter.children.length === 0 && filter.playlist !== null) {
-          scoreSum += scaledRatio;
-          ranges.push({ max: scoreSum, filter: filter });
+        if (filter.children.length === 0) {
+          weightedChoicesPush(weightedGenres, scaledRatio, filter);
         }
         return new CarryIterator(scaledRatio, filter.children)[
           Symbol.iterator
         ]();
       }
     );
+
+    const countries = new Map<string, boolean>();
+    settings.countryFilters.forEach((c) => {
+      countries.set(c.id, c.on.value());
+    });
+
     for (let i = 0; i < 10; ++i) {
-      const target = Math.random() * scoreSum;
-      for (const { max, filter } of ranges) {
-        if (max < target) continue;
-        while (true) {
-          const {
-            value,
-            done,
-          }: {
-            value: Track;
-            done?: boolean | undefined;
-          } = await filter.playlist!.next();
-          if (done === true) break;
-          hydrate(value);
-          await settings.current.set([value, filter.desc]);
-          return;
-        }
-        break;
+      const order = randomChoice(weightedOrders);
+      const genre = randomChoice(weightedGenres);
+      if (order == null || genre == null) {
+        console.log("No enabled orders/genres! Aborting advance.");
+        return;
       }
+      const gen = mapEnsure(
+        trackRequesters,
+        order.id[0] + "/" + genre.id.join("/"),
+        () => trackRequester(order.id[0], genre.id[0], genre.id[1], countries)
+      );
+      const {
+        value,
+        done,
+      }: {
+        value: Track;
+        done?: boolean | undefined;
+      } = await gen.next();
+      if (done === true) break;
+      hydrate(value);
+      await settings.current.set([value, order.desc + " / " + genre.desc]);
+      return;
     }
     await settings.current.set(null);
-    console.log(
-      "No more tracks matching filters!  Aborting advance.",
-      scoreSum
-    );
+    console.log("No more tracks matching filters!  Aborting advance.");
   };
 
   const finishCurrent = async (): Promise<void> => {
@@ -597,7 +649,7 @@ import {
       );
     } else {
       return new WDetailLevel({
-        open: new Setting("settingopen/" + at.id, at.id === "setting/top"),
+        open: new Setting("settingopen/" + at.id, false),
         summ: whbox(
           new WToggleButton({
             klass: "enabled",
@@ -696,12 +748,19 @@ import {
                 "playbody",
                 wvbox(
                   player,
-                  wtag(
-                    "info",
-                    new WBindText("player;from", currentTrack, (t) =>
-                      t !== null ? "From: " + t[1] : ""
-                    )
-                  ),
+                  wvboxTag({
+                    tag: "info",
+                    nodes: [
+                      new WBindText("player;from", currentTrack, (t) =>
+                        t !== null ? "From: " + t[1] : ""
+                      ),
+                      new WBindText("player;country", currentTrack, (t) =>
+                        t !== null && !settings.countryFilters[0].on.value()
+                          ? t[0].track.json["location_text"]
+                          : ""
+                      ),
+                    ],
+                  }),
                   wtag(
                     "controls",
                     whbox(
@@ -799,7 +858,47 @@ import {
                     )
                   ),
                   helpText,
-                  wtag("settings", wvbox(...settings.filters.map(settingsTree)))
+                  wtag(
+                    "settings",
+                    wvbox(
+                      new WDetailLevel({
+                        open: new ValueChainAnchor<boolean>(false),
+                        summ: whbox(wtext("Ranking")),
+                        childrenGenerator: () => [
+                          whbar(),
+                          ...settings.orderFilters.map(settingsTree),
+                        ],
+                      }),
+                      new WDetailLevel({
+                        open: new ValueChainAnchor<boolean>(false),
+                        summ: whbox(wtext("Genre")),
+                        childrenGenerator: () => [
+                          whbar(),
+                          ...settings.genreFilters.map(settingsTree),
+                        ],
+                      }),
+                      new WDetailLevel({
+                        open: new ValueChainAnchor<boolean>(false),
+                        summ: whbox(wtext("Country")),
+                        childrenGenerator: () => [
+                          whbar(),
+                          ...settings.countryFilters.map((country) =>
+                            wtag(
+                              "detail",
+                              whbox(
+                                new WToggleButton({
+                                  klass: "enabled",
+                                  text: "enabled",
+                                  bind: country.on,
+                                }),
+                                wtext(country.name)
+                              )
+                            )
+                          ),
+                        ],
+                      })
+                    )
+                  )
                 )
               );
             },

@@ -132,7 +132,6 @@ func main() {
 			{
 				Id: "002",
 				Up: []string{
-					"delete from genreRank where date < '2020-10-03 00:00:00'",
 					"create table countryRank (date timestamp, \"primary\" text, sort text, rank integer, track bigint, primary key (\"primary\", sort, date, rank))",
 					"alter table track add column lastSeen timestamp default '2020-12-26 00:00:00'",
 				},
@@ -298,23 +297,21 @@ func main() {
 				// Country rank
 				locationRaw := trackdata.S("location_text")
 				if locationRaw.Data() != nil {
-					location := strings.Split(locationRaw.Data().(string), ", ")
-					if len(location) > 1 {
-						country := location[1]
-						_, err = db.Exec(
-							"insert into countryRank (date, \"primary\", sort, rank, track) values ($1, $2, $3, $4, $5) on conflict (\"primary\", sort, date, rank) do nothing",
-							date,
-							country,
-							sort,
-							int32(countryRank),
-							trackID,
-						)
-						if err != nil {
-							logrus.Errorf("Failed to create country rank record; %+v", err)
-							return true
-						}
-						countryRank++
+					locSplits := strings.Split(locationRaw.Data().(string), ", ")
+					country := locSplits[len(locSplits)-1]
+					_, err = db.Exec(
+						"insert into countryRank (date, \"primary\", sort, rank, track) values ($1, $2, $3, $4, $5) on conflict (\"primary\", sort, date, rank) do nothing",
+						date,
+						country,
+						sort,
+						int32(countryRank),
+						trackID,
+					)
+					if err != nil {
+						logrus.Errorf("Failed to create country rank record; %+v", err)
+						return true
 					}
+					countryRank++
 				}
 			}
 
@@ -494,65 +491,6 @@ func main() {
 		nextpage := page + 1
 		RetJSON(w, TracksRet{
 			Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v", sort, topcat, subcat, nextpage),
-			Tracks: tracks,
-		})
-	})
-
-	http.HandleFunc("/api/countryrank/", func(w http.ResponseWriter, req *http.Request) {
-		var err error
-		type ErrorRet struct {
-			Error string `json:"error"`
-		}
-		RetE := func(e string) {
-			RetJSON(w, ErrorRet{
-				Error: e,
-			})
-		}
-		type TracksRet struct {
-			Next   string  `json:"next"`
-			Tracks []track `json:"tracks"`
-		}
-		splits := strings.Split(req.URL.Path, "/")[3:]
-		if len(splits) < 2 {
-			RetE("Not enough key params")
-			return
-		}
-		sort, topcat := splits[0], splits[1]
-		page := 0
-		if len(splits) == 3 {
-			got, err := strconv.Atoi(splits[3])
-			if err == nil {
-				page = int(got)
-			}
-		}
-		pagesize := 100
-		rows, err := db.Queryx(
-			"select track.* from countryRank left join track on countryRank.track = track.id where sort = $1 and \"primary\" = $2 order by date desc, rank desc offset $3 limit $4",
-			sort,
-			topcat,
-			page*pagesize,
-			pagesize,
-		)
-		if err != nil {
-			logrus.Errorf("Failed to query country ranks: %+v", err)
-			RetE("Internal error")
-			return
-		}
-		defer rows.Close()
-		tracks := []track{}
-		for rows.Next() {
-			var track0 track
-			err = rows.StructScan(&track0)
-			if err != nil {
-				logrus.Errorf("Failed to scan country rank track result: %+v", err)
-				RetE("Internal error")
-				return
-			}
-			tracks = append(tracks, track0)
-		}
-		nextpage := page + 1
-		RetJSON(w, TracksRet{
-			Next:   fmt.Sprintf("/api/countryrank/%v/%v/%v", sort, topcat, nextpage),
 			Tracks: tracks,
 		})
 	})

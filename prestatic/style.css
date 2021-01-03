@@ -252,7 +252,7 @@ p {
 .trcklistelement > div {
   justify-content: space-around;
   padding-left: 0.2em;
-  width: 100%;
+  flex-grow: 1;
 }
 
 .trcklistelement > div > a {
@@ -265,7 +265,7 @@ p {
 }
 
 .trcklistelement .date {
-  color: rgb(58, 58, 58);
+  color: rgb(82, 82, 82);
 }
 
 .trcklistelement .time {
@@ -371,4 +371,33 @@ a {
 .settings > .w_details > .w_details > .w_detailssummary {
   margin-top: 0.5em;
   font-size: 1.2em;
+}
+
+div.info {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 0.5em 1em 0.5em 1em;
+}
+
+div.info > * {
+  margin: 0;
+}
+
+div.info > *:last-child {
+  flex-grow: 1;
+  text-align: right;
+}
+
+.trcklistelement .w_imagelink {
+  flex-shrink: 0;
+}
+
+.trcklistelement .w_imagelink > img {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  overflow: hidden;
 }
