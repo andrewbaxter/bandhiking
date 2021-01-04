@@ -374,11 +374,15 @@ import {
   }
   constantCountries.forEach((country) => {
     const countryId = "filter/country/" + country;
+    const on = new Setting<boolean>(countryId + ".on", country === "top");
     settings.countryFilters.push({
       id: country,
       name: country,
-      on: new Setting<boolean>(countryId + ".on", country === "top"),
+      on: on,
     });
+    new Listener(`country ${country} reset generators`, on, async (v) =>
+      trackRequesters.clear()
+    );
   });
   {
     const othersSettingId = "filter/country/others.on";
@@ -538,7 +542,7 @@ import {
       countries.set(c.id, c.on.value());
     });
 
-    for (let i = 0; i < 10; ++i) {
+    for (let i = 0; i < 100; ++i) {
       const order = randomChoice(weightedOrders);
       const genre = randomChoice(weightedGenres);
       if (order == null || genre == null) {
