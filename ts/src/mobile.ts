@@ -243,8 +243,8 @@ import {
     subgenre: string,
     countries: Map<string, boolean>
   ): AsyncIterator<Track> {
-    const allCountries = countries.has("all");
-    const otherCountries = countries.has("other");
+    const allCountries = countries.get("all") === true;
+    const otherCountries = countries.has("other") === true;
     let next = null;
     while (true) {
       const url =
@@ -342,7 +342,7 @@ import {
           {
             id: [genre.value, "all"],
             name: "all",
-            desc: "all",
+            desc: genreDesc + " / " + "all",
             on: new Setting<boolean>(allSettingId, true),
             ratio: new Setting<number>(allSettingId + "/all", 1.0),
             children: [],
@@ -609,17 +609,21 @@ import {
         text: "Star",
         bind: track.star,
       });
-      const dateText = document.createElement("div");
-      dateText.classList.add("date");
-      dateText.textContent = track.track.playedAt!.toLocaleDateString();
-      const timeText = document.createElement("div");
-      timeText.classList.add("time");
-      timeText.textContent = track.track.playedAt!.toLocaleTimeString();
+      let timeEls: Array<Element> = [];
+      if (track.track.playedAt != undefined) {
+        const dateText = document.createElement("div");
+        dateText.classList.add("date");
+        dateText.textContent = track.track.playedAt!.toLocaleDateString();
+        const timeText = document.createElement("div");
+        timeText.classList.add("time");
+        timeText.textContent = track.track.playedAt!.toLocaleTimeString();
+        timeEls = [dateText, timeText];
+      }
       this.dom = hdiv(
         image.getDOM(),
         vdiv(
           title,
-          tag("tool", hdiv(dateText, timeText, spacer(), this.toggle.getDOM()))
+          tag("tool", hdiv(...timeEls, spacer(), this.toggle.getDOM()))
         )
       );
       this.dom.classList.add("trcklistelement");
