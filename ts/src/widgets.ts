@@ -212,6 +212,12 @@ class WTabs implements Widget {
   }
 }
 
+export const button = (): HTMLButtonElement => {
+  const out = document.createElement("button");
+  out.type = "button";
+  return out;
+};
+
 export const div = (...nodes: Element[]): HTMLDivElement => {
   const out = document.createElement("div");
   out.append(...nodes);
@@ -334,7 +340,7 @@ export const wbutton = ({
     image.alt = text;
     out = image;
   } else {
-    out = div();
+    out = button();
     out.textContent = text;
   }
   // eslint-disable-next-line @typescript-eslint/no-misused-promises

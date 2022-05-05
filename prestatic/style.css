@@ -160,6 +160,16 @@ img.w_button {
 img.w_button:hover {
   opacity: 100%;
 }
+button.w_button {
+  border: 2px solid var(--color5);
+  color: var(--text);
+  padding: 0.4em;
+  width: 100%;
+}
+button.w_button:hover {
+  border: white;
+  color: white;
+}
 
 .w_slider > * {
   margin-left: 0.2em;

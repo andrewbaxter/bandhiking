@@ -913,32 +913,34 @@ import {
                             )
                           ),
                         ],
-                      }),
-                      wbutton({
-                        text: "Clear history",
-                        action: async () => {
-                          settings.historyEpoch.set(new Date());
-                        },
-                      }),
-                      wbutton({
-                        text: "Restore history",
-                        action: async () => {
-                          settings.historyEpoch.set(epoch);
-                        },
-                      }),
-                      wbutton({
-                        text: "Clear starred",
-                        action: async () => {
-                          settings.starEpoch.set(new Date());
-                        },
-                      }),
-                      wbutton({
-                        text: "Restore starred",
-                        action: async () => {
-                          settings.starEpoch.set(epoch);
-                        },
                       })
                     )
+                  ),
+                  wvbox(
+                    wbutton({
+                      text: "Clear history",
+                      action: async () => {
+                        settings.historyEpoch.set(new Date());
+                      },
+                    }),
+                    wbutton({
+                      text: "Restore history",
+                      action: async () => {
+                        settings.historyEpoch.set(epoch);
+                      },
+                    }),
+                    wbutton({
+                      text: "Clear starred",
+                      action: async () => {
+                        settings.starEpoch.set(new Date());
+                      },
+                    }),
+                    wbutton({
+                      text: "Restore starred",
+                      action: async () => {
+                        settings.starEpoch.set(epoch);
+                      },
+                    })
                   )
                 )
               );
