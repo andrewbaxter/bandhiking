@@ -144,7 +144,10 @@ import {
       while (cursor) {
         if (out.length >= count) break;
         const temp = cursor.value;
-        if (temp.playedAt !== undefined) {
+        if (
+          temp.playedAt !== undefined &&
+          temp.playedAt > settings.historyEpoch.value()
+        ) {
           if (matchCount >= start) {
             out.push(hydrate(temp));
           }
@@ -175,7 +178,11 @@ import {
       while (cursor) {
         if (out.length >= count) break;
         const v = cursor.value;
-        if (v.playedAt !== undefined && v.star) {
+        if (
+          v.playedAt !== undefined &&
+          v.playedAt > settings.starEpoch.value() &&
+          v.star
+        ) {
           if (matchCount >= start) {
             out.push(hydrate(v));
           }
@@ -217,12 +224,15 @@ import {
     on: Setting<boolean>;
   };
 
+  const epoch = new Date(0, 0, 1, 0, 0, 0, 0);
   const settings = {
     volume: new Setting<number>("volume", 1.0),
     current: new Setting<[Track, string] | null>("track", null),
     orderFilters: new Array<Filter>(),
     genreFilters: new Array<Filter>(),
     countryFilters: new Array<CountryFilter>(),
+    historyEpoch: new Setting<Date>("history_epoch", epoch),
+    starEpoch: new Setting<Date>("history_epoch", epoch),
   };
 
   const currentTrack = new (class extends ChainLink<
@@ -437,9 +447,8 @@ import {
           // eslint-disable-next-line prefer-rest-params
           return oldChangeState.apply(this, arguments);
         };
-        const artarea = this.frame.contentWindow!.document.getElementById(
-          "artarea"
-        )!;
+        const artarea =
+          this.frame.contentWindow!.document.getElementById("artarea")!;
         artarea.addEventListener("click", (_) => {
           playBlocked = false;
         });
@@ -904,6 +913,30 @@ import {
                             )
                           ),
                         ],
+                      }),
+                      wbutton({
+                        text: "Clear history",
+                        action: async () => {
+                          settings.historyEpoch.set(new Date());
+                        },
+                      }),
+                      wbutton({
+                        text: "Restore history",
+                        action: async () => {
+                          settings.historyEpoch.set(epoch);
+                        },
+                      }),
+                      wbutton({
+                        text: "Clear starred",
+                        action: async () => {
+                          settings.starEpoch.set(new Date());
+                        },
+                      }),
+                      wbutton({
+                        text: "Restore starred",
+                        action: async () => {
+                          settings.starEpoch.set(epoch);
+                        },
                       })
                     )
                   )
