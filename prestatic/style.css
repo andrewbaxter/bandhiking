@@ -385,6 +385,10 @@ a {
   font-size: 1.2em;
 }
 
+.postfilters {
+  padding-top: 1em;
+}
+
 div.info {
   display: flex;
   flex-direction: row;
