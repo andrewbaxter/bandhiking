@@ -439,13 +439,13 @@ export class WBindText<T> implements Widget {
   }
 }
 
-export const wbindList = async <T>({
+export const wbindList = <T>({
   source,
   create,
 }: {
   source: DataSource<T>;
   create: (e: T) => Widget;
-}): Promise<WBindList<T>> => {
+}): WBindList<T> => {
   const out = new WBindList({ source: source, create: create });
   out.update();
   return out;

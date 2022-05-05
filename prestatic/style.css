@@ -161,13 +161,15 @@ img.w_button:hover {
   opacity: 100%;
 }
 button.w_button {
-  border: 2px solid var(--color5);
+  border: 2px solid var(--text);
   color: var(--text);
   padding: 0.4em;
-  width: 100%;
+  background: none;
+  border-radius: 0.4em;
+  font-size: 1em;
 }
 button.w_button:hover {
-  border: white;
+  border-color: white;
   color: white;
 }
 

@@ -821,21 +821,53 @@ import {
           new WTab({
             icon: "history.svg",
             text: "History",
-            builder: (): Promise<Widget> => {
-              return wbindList({
-                source: trackHistory,
-                create: (v): Widget => new TrackListElement(v),
-              });
+            builder: async (): Promise<Widget> => {
+              return wvbox(
+                whbox(
+                  wbutton({
+                    text: "Clear",
+                    action: async () => {
+                      settings.historyEpoch.set(new Date());
+                    },
+                  }),
+                  wbutton({
+                    text: "Restore",
+                    action: async () => {
+                      settings.historyEpoch.set(epoch);
+                    },
+                  })
+                ),
+                wbindList({
+                  source: trackHistory,
+                  create: (v): Widget => new TrackListElement(v),
+                })
+              );
             },
           }),
           new WTab({
             icon: "star-outline.svg",
             text: "Favorites",
-            builder: (): Promise<Widget> => {
-              return wbindList({
-                source: trackFavorites,
-                create: (v): Widget => new TrackListElement(v),
-              });
+            builder: async (): Promise<Widget> => {
+              return wvbox(
+                whbox(
+                  wbutton({
+                    text: "Clear",
+                    action: async () => {
+                      settings.starEpoch.set(new Date());
+                    },
+                  }),
+                  wbutton({
+                    text: "Restore",
+                    action: async () => {
+                      settings.starEpoch.set(epoch);
+                    },
+                  })
+                ),
+                wbindList({
+                  source: trackFavorites,
+                  create: (v): Widget => new TrackListElement(v),
+                })
+              );
             },
           }),
           new WTab({
@@ -915,32 +947,6 @@ import {
                         ],
                       })
                     )
-                  ),
-                  wvbox(
-                    wbutton({
-                      text: "Clear history",
-                      action: async () => {
-                        settings.historyEpoch.set(new Date());
-                      },
-                    }),
-                    wbutton({
-                      text: "Restore history",
-                      action: async () => {
-                        settings.historyEpoch.set(epoch);
-                      },
-                    }),
-                    wbutton({
-                      text: "Clear starred",
-                      action: async () => {
-                        settings.starEpoch.set(new Date());
-                      },
-                    }),
-                    wbutton({
-                      text: "Restore starred",
-                      action: async () => {
-                        settings.starEpoch.set(epoch);
-                      },
-                    })
                   )
                 )
               );
