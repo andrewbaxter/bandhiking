@@ -208,6 +208,20 @@ import {
     }
   }
 
+  class DateSetting extends ValueChainAnchor<Date> {
+    name: string;
+    constructor(name: string, initial: Date) {
+      const found = localStorage.getItem(name);
+      super(found === null ? initial : new Date(JSON.parse(found)));
+      this.name = name;
+    }
+
+    async set(v: Date): Promise<void> {
+      localStorage.setItem(this.name, JSON.stringify(v));
+      await super.set(v);
+    }
+  }
+
   // Model setup
   //
   type Filter = {
@@ -231,8 +245,8 @@ import {
     orderFilters: new Array<Filter>(),
     genreFilters: new Array<Filter>(),
     countryFilters: new Array<CountryFilter>(),
-    historyEpoch: new Setting<Date>("history_epoch", epoch),
-    starEpoch: new Setting<Date>("history_epoch", epoch),
+    historyEpoch: new DateSetting("history_epoch", epoch),
+    starEpoch: new DateSetting("history_epoch", epoch),
   };
 
   const currentTrack = new (class extends ChainLink<
