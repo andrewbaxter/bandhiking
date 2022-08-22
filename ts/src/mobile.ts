@@ -736,16 +736,42 @@ import {
     return w;
   };
 
-  const helpText = new (class implements Widget {
+  const errorText = new (class implements Widget {
     dom: HTMLDivElement;
-    constructor(paras: Array<string>) {
+    constructor() {
       this.dom = document.createElement("div");
-      for (const x of paras) {
+      this.dom.classList.add("errors");
+
+      const pairs: [string, { on: Setting<boolean> }[]][] = [
+        ["Ranking", settings.orderFilters],
+        ["Genre", settings.genreFilters],
+        ["Country option", settings.countryFilters],
+      ];
+      for (const [choiceType, group] of pairs) {
         const xel = document.createElement("p");
-        xel.textContent = x;
+        xel.textContent = `• Please check at least one ${choiceType}`;
         this.dom.appendChild(xel);
+        const dest = new (class implements ChainDest {
+          comment: string;
+          group: { on: Setting<boolean> }[];
+          constructor(choiceType: string, group: { on: Setting<boolean> }[]) {
+            this.comment = "errors-" + choiceType;
+            this.group = group;
+            this.update();
+          }
+          update() {
+            xel.style.display = !this.group.some((v) => v.on.value())
+              ? ""
+              : "none";
+          }
+          async process() {
+            this.update();
+          }
+        })(choiceType, group);
+        for (const f of group) {
+          f.on.dests.add(dest);
+        }
       }
-      this.dom.style.display = "none";
     }
     getDOM(): Element {
       return this.dom;
@@ -753,12 +779,7 @@ import {
     destroy(): void {
       this.dom.remove();
     }
-  })([
-    "Change how Bandhiking selects music to play.  Note that these changes won't affect anything until you advance to the next track.",
-    "Unchecking a genre will disable all of the subgenres.  Checking a genre will cause the individual subgenres' checkboxes to be used.",
-    "The sliders control the chance for a checked genre/subgenre to be played.  For example, if subgenre A's slider is at 1/2 and B's is at full, the next track is twice as likely to be B.",
-    "Note that if 3 subgenres from genre A are checked and just \"All\" from genre B, if all their sliders are at full B only has a 1/4 chance of being played next.  To make A and B played equally you'll have to reduce the sliders for each of A's subgenres.",
-  ]);
+  })();
 
   wroot(
     wtag(
@@ -859,36 +880,7 @@ import {
               return wtag(
                 "settings-outer",
                 wvbox(
-                  wtag(
-                    "tool",
-                    whbox(
-                      wimageLink(
-                        "gitlab.svg",
-                        "Source",
-                        "https://gitlab.com/rendaw/bandhiking"
-                      ),
-                      wspacer(),
-                      new WToggleButton({
-                        klass: "help",
-                        text: "Help",
-                        bind: new (class implements ChainAnchor<boolean> {
-                          v: boolean;
-                          constructor() {
-                            this.v = false;
-                            this.dests = new Set();
-                          }
-                          async set(value: boolean): Promise<void> {
-                            helpText.dom.style.display = value ? "" : "none";
-                          }
-                          dests: Set<ChainDest>;
-                          value(): boolean {
-                            return this.v;
-                          }
-                        })(),
-                      })
-                    )
-                  ),
-                  helpText,
+                  errorText,
                   wtag(
                     "settings",
                     wvbox(
@@ -933,6 +925,51 @@ import {
                   wtag(
                     "postfilters",
                     wvbox(
+                      wbutton({
+                        text: "Download settings",
+                        action: async () => {
+                          const data: Record<string, string> = {};
+                          for (let i = 0; i < localStorage.length; i += 1) {
+                            const k = localStorage.key(i)!;
+                            data[k] = localStorage.getItem(k)!;
+                          }
+                          const a = document.createElement("a");
+                          a.href = URL.createObjectURL(
+                            new Blob([JSON.stringify(data)], {
+                              type: "text/json",
+                            })
+                          );
+                          a.download = `bandhiking_settings_${new Date().toISOString()}.json`;
+                          a.click();
+                          setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+                        },
+                      }),
+                      wbutton({
+                        text: "Upload settings",
+                        action: async () => {
+                          const input = document.createElement("input");
+                          input.setAttribute("type", "file");
+                          input.style.display = "none";
+                          input.addEventListener("change", (_) => {
+                            if (input.files?.length === 0) {
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.addEventListener("load", (e) => {
+                              const settings = JSON.parse(
+                                e.target!.result! as string
+                              );
+                              localStorage.clear();
+                              for (const key of Object.keys(settings)) {
+                                localStorage.setItem(key, settings[key]);
+                              }
+                              window.location.reload();
+                            });
+                            reader.readAsText(input.files![0]);
+                          });
+                          input.click();
+                        },
+                      }),
                       wbutton({
                         text: "Clear history",
                         action: async () => {

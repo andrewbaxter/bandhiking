@@ -1,15 +1,16 @@
 {
   "dependencies": {
-    "@typescript-eslint/eslint-plugin": "^2.24.0",
-    "@typescript-eslint/eslint-plugin-tslint": "^2.24.0",
-    "@typescript-eslint/parser": "^2.24.0",
-    "eslint": "^6.8.0",
-    "eslint-config-prettier": "^6.10.0",
-    "idb": "^5.0.1",
-    "rollup": "^2.0.6",
-    "typescript": "^3.8.3"
+    "idb": "^7.0.2"
   },
   "devDependencies": {
-    "@rollup/plugin-node-resolve": "^7.1.1"
+    "@rollup/plugin-node-resolve": "^13.3.0",
+    "@typescript-eslint/eslint-plugin": "^5.33.1",
+    "@typescript-eslint/eslint-plugin-tslint": "^5.33.1",
+    "@typescript-eslint/parser": "^5.33.1",
+    "eslint": "^8.22.0",
+    "eslint-config-prettier": "^8.5.0",
+    "npm-check-updates": "^16.0.5",
+    "rollup": "^2.78.1",
+    "typescript": "^4.7.4"
   }
 }

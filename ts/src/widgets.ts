@@ -660,13 +660,12 @@ export class WDetailLevel implements Widget {
   }
 
   update(openState: boolean) {
+    this.dom.innerHTML = "";
+    this.dom.append(this.sumDOM);
     if (openState) {
-      this.dom.append(this.sumDOM);
       this.children = this.childrenGenerator();
       this.dom.append(...this.children.map((c) => c.getDOM()));
     } else {
-      this.dom.innerHTML = "";
-      this.dom.append(this.sumDOM);
       this.children = [];
     }
     this.dom.setAttribute("open", "" + openState);

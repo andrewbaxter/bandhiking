@@ -196,13 +196,8 @@ button.w_button:hover {
   background-image: url("star.svg");
 }
 
-.w_toggle.help input {
-  background-image: url("help-circle-outline.svg");
-}
-
-.w_toggle.help input:checked,
-.w_toggle.help input:hover {
-  background-image: url("help-circle.svg");
+div.errors {
+  color:rgb(210, 106, 106);
 }
 
 p {
