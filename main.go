@@ -246,7 +246,7 @@ func main() {
 		logrus.Tracef("Deleting old data, %v", date)
 
 		_, err = db.Exec(
-			"delete from genreRank r using (select track, row_number() over (partition by \"primary\", \"secondary\", sort order by date desc, rank desc) rn from genreRank) r2 where r.track = r2.track and r2.rn > 1000",
+			"delete from genreRank r using (select track, row_number() over (partition by \"primary\", \"secondary\", sort order by date desc, rank desc) rn from genreRank) r2 where r.track = r2.track and r2.rn > 10000",
 		)
 		if err != nil {
 			logrus.Errorf("Failed to prune genreRank; %+v", err)
@@ -429,6 +429,11 @@ func main() {
 			}
 		}
 		// updateCountries()
+
+		_, err = db.Exec("vacuum full")
+		if err != nil {
+			logrus.Errorf("Failed to vacuum; %+v", err)
+		}
 	}
 	scrape := func() {
 		if !atomic.CompareAndSwapInt32(&isScraping, 0, 1) {

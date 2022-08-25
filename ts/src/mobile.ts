@@ -268,6 +268,7 @@ import {
   })("currentTrack", [settings.current]);
 
   const trackRequesters = new Map<string, AsyncIterator<Track>>();
+  setInterval(() => trackRequesters.clear(), 1000 * 60 * 60 * 24);
 
   async function* trackRequester(
     sort: string,
