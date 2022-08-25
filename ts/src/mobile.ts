@@ -40,8 +40,14 @@ import {
 (async (): Promise<void> => {
   type Track = {
     id: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    json: any;
+    url_hints_subdomain: string;
+    url_hints_slug: string;
+    primary_text: string;
+    secondary_text: string;
+    type: string;
+    art_id: string;
+    featured_track_id: string;
+    location_text: string;
     playedAt?: Date;
     star: boolean;
   };
@@ -72,23 +78,23 @@ import {
   });
 
   const trackUrl = (track: Track): string => {
-    return `https://${track.json.url_hints.subdomain}.bandcamp.com/album/${track.json.url_hints.slug}`;
+    return `https://${track.url_hints_subdomain}.bandcamp.com/album/${track.url_hints_slug}`;
   };
 
   const trackArtist = (track: Track): string => {
-    return track.json.secondary_text;
+    return track.secondary_text;
   };
 
   const trackName = (track: Track): string => {
-    return track.json.primary_text;
+    return track.primary_text;
   };
 
   const trackArtUrl = (track: Track): string => {
-    return `https://f4.bcbits.com/img/${track.json.type}${track.json.art_id}_42.jpg`;
+    return `https://f4.bcbits.com/img/${track.type}${track.art_id}_42.jpg`;
   };
 
   const trackPlayerUrl = (track: Track): string => {
-    return `/api/embed/${track.json.id}~~~${track.json.featured_track.id}`;
+    return `/api/embed/${track.id}~~~${track.featured_track_id}`;
   };
 
   class DBSetting<
@@ -232,11 +238,13 @@ import {
     ratio: Setting<number>;
     children: Array<Filter>;
   };
+  /*
   type CountryFilter = {
     id: string;
     name: string;
     on: Setting<boolean>;
   };
+  */
 
   const epoch = new Date(0, 0, 1, 0, 0, 0, 0);
   const settings = {
@@ -244,7 +252,7 @@ import {
     current: new Setting<[Track, string] | null>("track", null),
     orderFilters: new Array<Filter>(),
     genreFilters: new Array<Filter>(),
-    countryFilters: new Array<CountryFilter>(),
+    //countryFilters: new Array<CountryFilter>(),
     historyEpoch: new DateSetting("history_epoch", epoch),
     starEpoch: new DateSetting("history_epoch", epoch),
   };
@@ -264,11 +272,13 @@ import {
   async function* trackRequester(
     sort: string,
     genre: string,
-    subgenre: string,
-    countries: Map<string, boolean>
+    subgenre: string
+    // countries: Map<string, boolean>
   ): AsyncIterator<Track> {
+    /*
     const allCountries = countries.get("all") === true;
     const otherCountries = countries.has("other") === true;
+    */
     let next = null;
     while (true) {
       const url =
@@ -284,7 +294,6 @@ import {
       }
       next = resp.next;
       for (let track of resp.tracks) {
-        track.json = JSON.parse(track.json);
         const found = await db.get(dbName, track.id);
         if (found !== undefined) {
           if (found.playedAt !== undefined) {
@@ -292,7 +301,7 @@ import {
           }
           track = found;
         }
-        let loc: string | undefined = track.json.location_text;
+        let loc: string | undefined = track.location_text;
         if (typeof loc === "string") {
           const splits = loc.split(", ");
           if (splits.length == 2) {
@@ -303,6 +312,7 @@ import {
         } else {
           loc = "";
         }
+        /*
         if (allCountries) {
           // okay - nop
         } else {
@@ -316,6 +326,7 @@ import {
             continue;
           }
         }
+        */
         yield track;
         next = null;
       }
@@ -326,9 +337,11 @@ import {
     name: string;
     value: string;
   }> = await (await fetch("/api/sorts")).json();
+  /*
   const constantCountries: Array<string> = await (
     await fetch("/api/countries")
   ).json();
+  */
 
   const constantGenres: Array<{
     value: string;
@@ -388,6 +401,7 @@ import {
       ),
     });
   });
+  /*
   {
     const allSettingId = "filter/country/all.on";
     settings.countryFilters.push({
@@ -416,6 +430,7 @@ import {
       on: new Setting<boolean>(othersSettingId, true),
     });
   }
+  */
 
   // UI setup
   //
@@ -560,10 +575,12 @@ import {
       }
     );
 
+    /*
     const countries = new Map<string, boolean>();
     settings.countryFilters.forEach((c) => {
       countries.set(c.id, c.on.value());
     });
+    */
 
     for (let i = 0; i < 100; ++i) {
       const order = randomChoice(weightedOrders);
@@ -575,7 +592,8 @@ import {
       const gen = mapEnsure(
         trackRequesters,
         order.id[0] + "/" + genre.id.join("/"),
-        () => trackRequester(order.id[0], genre.id[0], genre.id[1], countries)
+        () =>
+          trackRequester(order.id[0], genre.id[0], genre.id[1] /* countries*/)
       );
       const {
         value,
@@ -745,7 +763,7 @@ import {
       const pairs: [string, { on: Setting<boolean> }[]][] = [
         ["Ranking", settings.orderFilters],
         ["Genre", settings.genreFilters],
-        ["Country option", settings.countryFilters],
+        //["Country option", settings.countryFilters],
       ];
       for (const [choiceType, group] of pairs) {
         const xel = document.createElement("p");
@@ -806,11 +824,13 @@ import {
                       new WBindText("player;from", currentTrack, (t) =>
                         t !== null ? "From: " + t[1] : ""
                       ),
+                      /*
                       new WBindText("player;country", currentTrack, (t) =>
                         t !== null && !settings.countryFilters[0].on.value()
-                          ? t[0].track.json["location_text"]
+                          ? t[0].track.location_text
                           : ""
                       ),
+                      */
                     ],
                   }),
                   wtag(
@@ -899,7 +919,8 @@ import {
                           whbar(),
                           ...settings.genreFilters.map(settingsTree),
                         ],
-                      }),
+                      })
+                      /*
                       new WDetailLevel({
                         open: new ValueChainAnchor<boolean>(false),
                         summ: whbox(wtext("Country")),
@@ -920,6 +941,7 @@ import {
                           ),
                         ],
                       })
+                      */
                     )
                   ),
                   wtag(

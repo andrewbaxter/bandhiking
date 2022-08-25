@@ -17,6 +17,7 @@ import (
 	"github.com/robfig/cron"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 	_ "github.com/lib/pq"
 	psh "github.com/platformsh/config-reader-go/v2"
 	pshsql "github.com/platformsh/config-reader-go/v2/libpq"
@@ -48,9 +49,16 @@ type subgenre struct {
 }
 
 type track struct {
-	ID       int64  `json:"id"`
-	Blob     string `json:"json"`
-	LastSeen time.Time
+	ID                int64   `json:"id"`
+	ArtId             string  `json:"art_id"`
+	FeaturedTrackId   string  `json:"featured_track_id"`
+	LocationText      *string `json:"location_text"`
+	PrimaryText       string  `json:"primary_text"`
+	SecondaryText     string  `json:"secondary_text"`
+	Type              string  `json:"type"`
+	UrlHintsSlug      string  `json:"url_hints_slug"`
+	UrlHintsSubdomain string  `json:"url_hints_subdomain"`
+	Refcount          int     `json:"refcount"`
 }
 
 func main() {
@@ -119,6 +127,7 @@ func main() {
 		return
 	}
 	defer db.Close()
+	db.Mapper = reflectx.NewMapperFunc("json", strings.ToLower)
 	migrations := &migrate.MemoryMigrationSource{
 		Migrations: []*migrate.Migration{
 			{
@@ -137,6 +146,52 @@ func main() {
 				},
 				Down: []string{},
 			},
+			{
+				Id: "003",
+				Up: []string{
+					`alter table track
+	add art_id bigint,
+	add featured_track_id text,
+	add location_text text,
+	add primary_text text,
+	add secondary_text text,
+	add type text,
+	add url_hints_slug text,
+	add url_hints_subdomain text,
+	add refcount int not null default 0`,
+					`update track set
+	art_id = cast (blob ->> 'art_id' as bigint),
+	featured_track_id = blob -> 'featured_track' ->> 'id',
+	location_text = blob ->> 'location_text',
+	primary_text = blob ->> 'primary_text',
+	secondary_text = blob ->> 'secondary_text',
+	type = blob ->> 'type',
+	url_hints_slug = blob -> 'url_hints' ->> 'slug',
+	url_hints_subdomain = blob -> 'url_hints' ->> 'subdomain',
+	refcount = coalesce(gr.c, 0)
+	from
+	(select track, count(*) as c from genreRank group by track) gr
+	where gr.track = id`,
+					`delete from track where refcount = 0`,
+					`alter table track 
+	alter art_id set not null,
+	alter featured_track_id set not null,
+	alter primary_text set not null,
+	alter secondary_text set not null,
+	alter type set not null,
+	alter url_hints_slug set not null,
+	alter url_hints_subdomain set not null,
+	drop column blob,
+	drop column lastSeen`,
+					`delete from genreRank using (select distinct on ("primary", secondary, sort, track) track, "primary", secondary, sort, date, rank from genreRank order by "primary", secondary, sort, track, date desc, rank desc) as x where x.primary = genreRank.primary and x.secondary = genreRank.secondary and x.sort = genreRank.sort and x.track = genreRank.track and (x.date != genreRank.date or x.rank != genreRank.rank)`,
+					`alter table genreRank add unique ("primary", secondary, sort, track)`,
+					`drop table countryRank`,
+					`create or replace function refadd() returns trigger as $$ begin update track set refcount = refcount + 1 where id = new.track; return null; end; $$ language plpgsql`,
+					`create or replace function refsub() returns trigger as $$ begin update track set refcount = refcount - 1 where id = old.track; return null; end; $$ language plpgsql`,
+					`create trigger genrerank_refadd after insert on genreRank for each row execute procedure refadd()`,
+					`create trigger genrerank_refsub after delete on genreRank for each row execute procedure refsub()`,
+				},
+			},
 		},
 	}
 	logrus.Tracef("Starting db migrations")
@@ -147,32 +202,34 @@ func main() {
 	}
 	logrus.Tracef("Db migrations done")
 
-	var countries []string
-	updateCountries := func() {
-		countries = []string{}
-		rows, err := db.Queryx(
-			"select count(*) as card, \"primary\" from countryRank group by \"primary\" order by card desc limit 50",
-		)
-		if err != nil {
-			logrus.Errorf("Failed to query countries: %+v", err)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var row struct {
-				Card    int
-				Primary string
-			}
-			err = rows.StructScan(&row)
+	/*
+		var countries []string
+		updateCountries := func() {
+			countries = []string{}
+			rows, err := db.Queryx(
+				"select count(*) as card, \"primary\" from countryRank group by \"primary\" order by card desc limit 50",
+			)
 			if err != nil {
-				logrus.Errorf("Failed to scan country count result: %+v", err)
+				logrus.Errorf("Failed to query countries: %+v", err)
 				return
 			}
-			countries = append(countries, row.Primary)
+			defer rows.Close()
+			for rows.Next() {
+				var row struct {
+					Card    int
+					Primary string
+				}
+				err = rows.StructScan(&row)
+				if err != nil {
+					logrus.Errorf("Failed to scan country count result: %+v", err)
+					return
+				}
+				countries = append(countries, row.Primary)
+			}
 		}
-	}
 
-	updateCountries()
+		updateCountries()
+	*/
 
 	var isScraping int32
 
@@ -188,24 +245,14 @@ func main() {
 
 		logrus.Tracef("Deleting old data, %v", date)
 
-		pruneLimit := date.AddDate(0, -2, 0)
 		_, err = db.Exec(
-			"delete from genreRank where date < $1",
-			pruneLimit,
+			"delete from genreRank r using (select track, row_number() over (partition by \"primary\", \"secondary\", sort order by date desc, rank desc) rn from genreRank) r2 where r.track = r2.track and r2.rn > 1000",
 		)
 		if err != nil {
 			logrus.Errorf("Failed to prune genreRank; %+v", err)
 		}
 		_, err = db.Exec(
-			"delete from countryRank where date < $1",
-			pruneLimit,
-		)
-		if err != nil {
-			logrus.Errorf("Failed to prune countryRank; %+v", err)
-		}
-		_, err = db.Exec(
-			"delete from track where lastSeen < $1",
-			pruneLimit,
+			"delete from track where refcount = 0",
 		)
 		if err != nil {
 			logrus.Errorf("Failed to prune tracks; %+v", err)
@@ -214,10 +261,9 @@ func main() {
 		logrus.Tracef("Starting scrape, %v", date)
 
 		type ScrapeState struct {
-			Done        bool
-			GenreRank   int
-			CountryRank int
-			Page        int
+			Done      bool
+			GenreRank int
+			Page      int
 		}
 		pages := map[string]*ScrapeState{}
 
@@ -225,10 +271,9 @@ func main() {
 			state, ok := pages[stateKey]
 			if !ok {
 				state = &ScrapeState{
-					Done:        false,
-					GenreRank:   0,
-					CountryRank: 0,
-					Page:        0,
+					Done:      false,
+					GenreRank: 0,
+					Page:      0,
 				}
 				pages[stateKey] = state
 			}
@@ -237,7 +282,6 @@ func main() {
 			}
 			url = fmt.Sprintf(url, state.Page)
 			genreRank := state.GenreRank
-			countryRank := state.CountryRank
 			logrus.Tracef("Fetching %v", url)
 			res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
 			if err != nil {
@@ -267,12 +311,40 @@ func main() {
 					continue
 				}
 				trackID := int64(trackID0.(float64))
-				_, err = db.Exec(
-					"insert into track (id, blob, lastSeen) values ($1, $2, $3) on conflict (id) do update set lastSeen = $3",
-					trackID,
-					bytes,
-					date,
-				)
+				type KV struct {
+					key   string
+					value interface{}
+				}
+				kvs := []KV{
+					{key: "id", value: trackID},
+					{key: "art_id", value: strconv.Itoa(int(trackdata.Search("art_id").Data().(float64)))},
+					{key: "featured_track_id", value: trackdata.Search("featured_track", "id").Data().(string)},
+					{key: "location_text", value: trackdata.Search("location_text").Data().(string)},
+					{key: "primary_text", value: trackdata.Search("primary_text").Data().(string)},
+					{key: "secondary_text", value: trackdata.Search("secondary_text").Data().(string)},
+					{key: "type", value: _type},
+					{key: "url_hints_slug", value: trackdata.Search("url_hints", "slug").Data().(string)},
+					{key: "url_hints_subdomain", value: trackdata.Search("url_hints", "subdomain").Data().(string)},
+				}
+				query := strings.Builder{}
+				query.WriteString("insert into track (")
+				for i, kv := range kvs {
+					last := i == len(kvs)-1
+					query.WriteString(kv.key)
+					if !last {
+						query.WriteString(", ")
+					}
+				}
+				query.WriteString(") values (")
+				for i := range kvs {
+					query.WriteString(fmt.Sprintf("$%d", i+1))
+				}
+				query.WriteString(") on conflict (id) do nothing")
+				queryArgs := []interface{}{}
+				for _, kv := range kvs {
+					queryArgs = append(queryArgs, kv.value)
+				}
+				_, err = db.Exec(query.String(), queryArgs...)
 				if err != nil {
 					logrus.Errorf("Failed to create track record; %+v", err)
 					return true
@@ -280,7 +352,18 @@ func main() {
 
 				// Genre rank
 				_, err = db.Exec(
-					"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6) on conflict (\"primary\", secondary, sort, date, rank) do nothing",
+					"delete from genreRank where \"primary\" = $1 and secondary = $2 and sort = $3 and track = $4",
+					topcat,
+					subcat,
+					sort,
+					trackID,
+				)
+				if err != nil {
+					logrus.Errorf("Failed to delete conflicting rank record: %#v", err)
+					return true
+				}
+				_, err = db.Exec(
+					"insert into genreRank (date, \"primary\", secondary, sort, rank, track) values ($1, $2, $3, $4, $5, $6) on conflict (\"primary\", secondary, sort, track) do nothing",
 					date,
 					topcat,
 					subcat,
@@ -295,24 +378,13 @@ func main() {
 				genreRank++
 
 				// Country rank
-				locationRaw := trackdata.S("location_text")
-				if locationRaw.Data() != nil {
-					locSplits := strings.Split(locationRaw.Data().(string), ", ")
-					country := locSplits[len(locSplits)-1]
-					_, err = db.Exec(
-						"insert into countryRank (date, \"primary\", sort, rank, track) values ($1, $2, $3, $4, $5) on conflict (\"primary\", sort, date, rank) do nothing",
-						date,
-						country,
-						sort,
-						int32(countryRank),
-						trackID,
-					)
-					if err != nil {
-						logrus.Errorf("Failed to create country rank record; %+v", err)
-						return true
+				/*
+					locationRaw := trackdata.S("location_text")
+					if locationRaw.Data() != nil {
+						locSplits := strings.Split(locationRaw.Data().(string), ", ")
+						country := locSplits[len(locSplits)-1]
 					}
-					countryRank++
-				}
+				*/
 			}
 
 			state.Page++
@@ -320,7 +392,6 @@ func main() {
 				state.Done = true
 			}
 			state.GenreRank = genreRank
-			state.CountryRank = countryRank
 
 			return true
 		}
@@ -357,7 +428,7 @@ func main() {
 				}
 			}
 		}
-		updateCountries()
+		// updateCountries()
 	}
 	scrape := func() {
 		if !atomic.CompareAndSwapInt32(&isScraping, 0, 1) {
@@ -399,9 +470,11 @@ func main() {
 		RetJSON(w, genres)
 	})
 
-	http.HandleFunc("/api/countries", func(w http.ResponseWriter, req *http.Request) {
-		RetJSON(w, countries)
-	})
+	/*
+		http.HandleFunc("/api/countries", func(w http.ResponseWriter, req *http.Request) {
+			RetJSON(w, countries)
+		})
+	*/
 
 	embedPrefix := "/api/embed/"
 	http.HandleFunc(embedPrefix, func(w http.ResponseWriter, req *http.Request) {
