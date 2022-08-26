@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -261,59 +260,6 @@ func main() {
 	}
 	logrus.Tracef("Db migrations done")
 
-	logrus.Tracef("Temp generate locations")
-	{
-		tx, err := db.Beginx()
-		if err != nil {
-			logrus.Fatalf("Failed to start transaction: %s", err)
-		}
-		err = func() error {
-			_, err := tx.Exec("declare loc_cursor cursor for select id, location_text from track for update")
-			if err != nil {
-				return fmt.Errorf("failed to query for tracks: %s", err)
-			}
-			defer func() {
-				_, err := tx.Exec("close loc_cursor")
-				if err != nil {
-					logrus.Warnf("failed to close cursor for tracks: %s", err)
-				}
-			}()
-			for {
-				var cols struct {
-					LocationText *string `json:"location_text"`
-					Id           int64   `json:"id"`
-				}
-				err := tx.QueryRowx("fetch next from loc_cursor").StructScan(&cols)
-				if err == sql.ErrNoRows {
-					break
-				}
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal row: %s", err)
-				}
-				if cols.LocationText == nil {
-					var s string
-					cols.LocationText = &s
-				}
-				_, err = tx.Exec("update track set location = $1 where id = $2", sussLocation(*cols.LocationText), cols.Id)
-				if err != nil {
-					return fmt.Errorf("track update failed: %s", err)
-				}
-			}
-			return nil
-		}()
-		if err != nil {
-			err1 := tx.Rollback()
-			if err1 != nil {
-				logrus.Warnf("Failed to rollback transaction: %s", err1)
-			}
-			logrus.Fatalf("Failed to do location update: %s", err)
-		} else {
-			err = tx.Commit()
-			if err != nil {
-				logrus.Fatalf("Failed to commit transaction: %s", err)
-			}
-		}
-	}
 	/*
 		var countries []string
 		updateCountries := func() {
