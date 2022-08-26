@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -11,14 +12,20 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/Jeffail/gabs/v2"
 	"github.com/go-resty/resty/v2"
 	"github.com/robfig/cron"
+	"gitlab.com/rendaw/bandhiking/locations"
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 
+	"github.com/jackc/pgtype"
+	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/reflectx"
-	_ "github.com/lib/pq"
 	psh "github.com/platformsh/config-reader-go/v2"
 	pshsql "github.com/platformsh/config-reader-go/v2/libpq"
 	migrate "github.com/rubenv/sql-migrate"
@@ -48,17 +55,60 @@ type subgenre struct {
 	Name     string `json:"name"`
 }
 
-type track struct {
+type deserTrack struct {
 	ID                int64   `json:"id"`
 	ArtId             string  `json:"art_id"`
 	FeaturedTrackId   string  `json:"featured_track_id"`
 	LocationText      *string `json:"location_text"`
+	Location          int     `json:"location"`
 	PrimaryText       string  `json:"primary_text"`
 	SecondaryText     string  `json:"secondary_text"`
 	Type              string  `json:"type"`
 	UrlHintsSlug      string  `json:"url_hints_slug"`
 	UrlHintsSubdomain string  `json:"url_hints_subdomain"`
 	Refcount          int     `json:"refcount"`
+}
+
+type track struct {
+	ID                int64  `json:"id"`
+	ArtId             string `json:"art_id"`
+	FeaturedTrackId   string `json:"featured_track_id"`
+	Location          string `json:"location"`
+	PrimaryText       string `json:"primary_text"`
+	SecondaryText     string `json:"secondary_text"`
+	Type              string `json:"type"`
+	UrlHintsSlug      string `json:"url_hints_slug"`
+	UrlHintsSubdomain string `json:"url_hints_subdomain"`
+}
+
+func sussLocation(t string) int {
+	parts := strings.Split(t, ",")
+	parts1 := []string{}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		p = strings.ToLower(p)
+		p, _, _ := transform.String(transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn))), p)
+		for _, prefix := range []string{
+			"the ",
+			"federated states of ",
+			"kingdom of ",
+			"republic of ",
+		} {
+			p = strings.TrimPrefix(p, prefix)
+		}
+		for _, suffix := range []string{
+			" prefecture",
+			" city",
+		} {
+			p = strings.TrimSuffix(p, suffix)
+		}
+		p = strings.ReplaceAll(p, ".", "")
+		p = strings.ReplaceAll(p, "-", "")
+		parts1 = append(parts1, p)
+	}
+	key := strings.Join(parts1, ",")
+	location := locations.RawToId[key]
+	return location
 }
 
 func main() {
@@ -121,7 +171,7 @@ func main() {
 		}
 	}
 
-	db, err := sqlx.Connect("postgres", dbstring)
+	db, err := sqlx.Connect("pgx", dbstring)
 	if err != nil {
 		logrus.Fatalf("Failed to open [%v]: %+v", dbstring, err)
 		return
@@ -192,6 +242,15 @@ func main() {
 					`create trigger genrerank_refsub after delete on genreRank for each row execute procedure refsub()`,
 				},
 			},
+			{
+				Id: "004",
+				Up: []string{
+					`alter table track
+					add location int not null default 0,
+					alter column featured_track_id type bigint using(featured_track_id::bigint)`,
+				},
+				Down: []string{},
+			},
 		},
 	}
 	logrus.Tracef("Starting db migrations")
@@ -202,6 +261,59 @@ func main() {
 	}
 	logrus.Tracef("Db migrations done")
 
+	logrus.Tracef("Temp generate locations")
+	{
+		tx, err := db.Beginx()
+		if err != nil {
+			logrus.Fatalf("Failed to start transaction: %s", err)
+		}
+		err = func() error {
+			_, err := tx.Exec("declare loc_cursor cursor for select id, location_text from track for update")
+			if err != nil {
+				return fmt.Errorf("failed to query for tracks: %s", err)
+			}
+			defer func() {
+				_, err := tx.Exec("close loc_cursor")
+				if err != nil {
+					logrus.Warnf("failed to close cursor for tracks: %s", err)
+				}
+			}()
+			for {
+				var cols struct {
+					LocationText *string `json:"location_text"`
+					Id           int64   `json:"id"`
+				}
+				err := tx.QueryRowx("fetch next from loc_cursor").StructScan(&cols)
+				if err == sql.ErrNoRows {
+					break
+				}
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal row: %s", err)
+				}
+				if cols.LocationText == nil {
+					var s string
+					cols.LocationText = &s
+				}
+				_, err = tx.Exec("update track set location = $1 where id = $2", sussLocation(*cols.LocationText), cols.Id)
+				if err != nil {
+					return fmt.Errorf("track update failed: %s", err)
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			err1 := tx.Rollback()
+			if err1 != nil {
+				logrus.Warnf("Failed to rollback transaction: %s", err1)
+			}
+			logrus.Fatalf("Failed to do location update: %s", err)
+		} else {
+			err = tx.Commit()
+			if err != nil {
+				logrus.Fatalf("Failed to commit transaction: %s", err)
+			}
+		}
+	}
 	/*
 		var countries []string
 		updateCountries := func() {
@@ -246,7 +358,16 @@ func main() {
 		logrus.Tracef("Deleting old data, %v", date)
 
 		_, err = db.Exec(
-			"delete from genreRank r using (select track, row_number() over (partition by \"primary\", \"secondary\", sort order by date desc, rank desc) rn from genreRank) r2 where r.track = r2.track and r2.rn > 10000",
+			`delete from genreRank r
+			using (
+				select gr.track, row_number()
+				over (partition by gr.primary, gr.secondary, gr.sort, gr.location order by date desc, rank desc) rn
+				from (
+					select gr.track, gr.date, gr.rank, gr.primary, gr.secondary, gr.sort, track.location
+					from genreRank gr
+					left join track on gr.track = track.id
+				) as gr
+			) r2 where r.track = r2.track and r2.rn > 5000`,
 		)
 		if err != nil {
 			logrus.Errorf("Failed to prune genreRank; %+v", err)
@@ -311,20 +432,25 @@ func main() {
 					continue
 				}
 				trackID := int64(trackID0.(float64))
-				type KV struct {
+				locationText := trackdata.Search("location_text").Data()
+				var location int
+				if locationText != nil {
+					location = sussLocation(locationText.(string))
+				}
+				kvs := []struct {
 					key   string
 					value interface{}
-				}
-				kvs := []KV{
+				}{
 					{key: "id", value: trackID},
 					{key: "art_id", value: strconv.Itoa(int(trackdata.Search("art_id").Data().(float64)))},
-					{key: "featured_track_id", value: trackdata.Search("featured_track", "id").Data().(string)},
-					{key: "location_text", value: trackdata.Search("location_text").Data().(string)},
+					{key: "featured_track_id", value: strconv.Itoa(int(trackdata.Search("featured_track", "id").Data().(float64)))},
+					{key: "location_text", value: locationText},
 					{key: "primary_text", value: trackdata.Search("primary_text").Data().(string)},
 					{key: "secondary_text", value: trackdata.Search("secondary_text").Data().(string)},
 					{key: "type", value: _type},
 					{key: "url_hints_slug", value: trackdata.Search("url_hints", "slug").Data().(string)},
 					{key: "url_hints_subdomain", value: trackdata.Search("url_hints", "subdomain").Data().(string)},
+					{key: "location", value: location},
 				}
 				query := strings.Builder{}
 				query.WriteString("insert into track (")
@@ -337,7 +463,11 @@ func main() {
 				}
 				query.WriteString(") values (")
 				for i := range kvs {
+					last := i == len(kvs)-1
 					query.WriteString(fmt.Sprintf("$%d", i+1))
+					if !last {
+						query.WriteString(", ")
+					}
 				}
 				query.WriteString(") on conflict (id) do nothing")
 				queryArgs := []interface{}{}
@@ -376,15 +506,6 @@ func main() {
 					return true
 				}
 				genreRank++
-
-				// Country rank
-				/*
-					locationRaw := trackdata.S("location_text")
-					if locationRaw.Data() != nil {
-						locSplits := strings.Split(locationRaw.Data().(string), ", ")
-						country := locSplits[len(locSplits)-1]
-					}
-				*/
 			}
 
 			state.Page++
@@ -404,7 +525,7 @@ func main() {
 						strings.ReplaceAll(url.QueryEscape(topcat.Value), "%", "%%"),
 						sort,
 					)
-					if rankpage(allKey, allURL, sort, topcat.Value, "all") {
+					if rankpage(allKey, allURL, sort, topcat.Value, "other") {
 						time.Sleep(30 * time.Second)
 					}
 					for _, subcat := range topcat.Sub {
@@ -467,6 +588,43 @@ func main() {
 		}
 	}
 
+	http.HandleFunc("/count", func(w http.ResponseWriter, req *http.Request) {
+		type ErrorRet struct {
+			Error string `json:"error"`
+		}
+		RetE := func(e string) {
+			RetJSON(w, ErrorRet{
+				Error: e,
+			})
+		}
+		rows, err := db.Queryx("select sort, \"primary\", secondary, location, count(1) from genreRank left join track on genreRank.track = track.id group by sort, \"primary\", secondary, location")
+		if err != nil {
+			logrus.Errorf("Failed to query counts: %+v", err)
+			RetE("Internal error")
+			return
+		}
+		defer rows.Close()
+		type Row struct {
+			Sort      string `json:"sort"`
+			Primary   string `json:"primary"`
+			Secondary string `json:"secondary"`
+			Location  int64  `json:"location"`
+			Count     int    `json:"count"`
+		}
+		out := []Row{}
+		for rows.Next() {
+			var r Row
+			err = rows.StructScan(&r)
+			if err != nil {
+				logrus.Errorf("Failed to count result row: %+v", err)
+				RetE("Internal error")
+				return
+			}
+			out = append(out, r)
+		}
+		RetJSON(w, out)
+	})
+
 	http.HandleFunc("/api/sorts", func(w http.ResponseWriter, req *http.Request) {
 		RetJSON(w, sorts)
 	})
@@ -475,11 +633,9 @@ func main() {
 		RetJSON(w, genres)
 	})
 
-	/*
-		http.HandleFunc("/api/countries", func(w http.ResponseWriter, req *http.Request) {
-			RetJSON(w, countries)
-		})
-	*/
+	http.HandleFunc("/api/locations", func(w http.ResponseWriter, req *http.Request) {
+		RetJSON(w, locations.IdToName)
+	})
 
 	embedPrefix := "/api/embed/"
 	http.HandleFunc(embedPrefix, func(w http.ResponseWriter, req *http.Request) {
@@ -528,27 +684,85 @@ func main() {
 			Tracks []track `json:"tracks"`
 		}
 		splits := strings.Split(req.URL.Path, "/")[3:]
-		if len(splits) < 3 {
+		if len(splits) < 2 {
 			RetE("Not enough key params")
 			return
 		}
-		sort, topcat, subcat := splits[0], splits[1], splits[2]
+		sort, topcat := splits[0], splits[1]
+		var subcat string
+		if len(splits) >= 3 {
+			subcat = splits[2]
+		}
 		page := 0
 		if len(splits) == 4 {
-			got, err := strconv.Atoi(splits[3])
+			page0, err := strconv.Atoi(splits[3])
 			if err == nil {
-				page = int(got)
+				page = int(page0)
+			}
+		}
+		rawLoc := req.URL.Query().Get("l")
+		locs := pgtype.Int4Array{}
+		if rawLoc != "" {
+			locs0 := strings.Split(rawLoc, ",")
+			locs1 := []int{}
+			for _, loc0 := range locs0 {
+				loc, err := strconv.Atoi(loc0)
+				if err != nil {
+					logrus.Errorf("Bad location values: %+v", err)
+					RetE("Bad location values")
+					return
+				}
+				locs1 = append(locs1, loc)
+			}
+			err = locs.Set(locs1)
+			if err != nil {
+				logrus.Errorf("Failed to query location array: %+v", err)
+				RetE("Internal error")
 			}
 		}
 		pagesize := 100
-		rows, err := db.Queryx(
-			"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 and secondary = $3 order by date desc, rank desc offset $4 limit $5",
-			sort,
-			topcat,
-			subcat,
-			page*pagesize,
-			pagesize,
-		)
+		var rows *sqlx.Rows
+		if subcat == "" {
+			if rawLoc != "" {
+				rows, err = db.Queryx(
+					"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 and location = any($3) order by date desc, rank desc offset $4 limit $5",
+					sort,
+					topcat,
+					locs,
+					page*pagesize,
+					pagesize,
+				)
+			} else {
+				rows, err = db.Queryx(
+					"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 order by date desc, rank desc offset $3 limit $4",
+					sort,
+					topcat,
+					page*pagesize,
+					pagesize,
+				)
+			}
+		} else {
+			if rawLoc != "" {
+				rows, err = db.Queryx(
+					"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 and secondary = $3 and location = any($4) order by date desc, rank desc offset $5 limit $6",
+					sort,
+					topcat,
+					subcat,
+					locs,
+					page*pagesize,
+					pagesize,
+				)
+			} else {
+				rows, err = db.Queryx(
+					"select track.* from genreRank left join track on genreRank.track = track.id where sort = $1 and \"primary\" = $2 and secondary = $3 order by date desc, rank desc offset $4 limit $5",
+					sort,
+					topcat,
+					subcat,
+					page*pagesize,
+					pagesize,
+				)
+			}
+		}
 		if err != nil {
 			logrus.Errorf("Failed to query ranks: %+v", err)
 			RetE("Internal error")
@@ -557,20 +771,52 @@ func main() {
 		defer rows.Close()
 		tracks := []track{}
 		for rows.Next() {
-			var track0 track
+			var track0 deserTrack
 			err = rows.StructScan(&track0)
 			if err != nil {
 				logrus.Errorf("Failed to scan track result: %+v", err)
 				RetE("Internal error")
 				return
 			}
-			tracks = append(tracks, track0)
+
+			tracks = append(tracks, track{
+				ID:                track0.ID,
+				ArtId:             track0.ArtId,
+				FeaturedTrackId:   track0.FeaturedTrackId,
+				Location:          locations.IdToName[track0.Location],
+				PrimaryText:       track0.PrimaryText,
+				SecondaryText:     track0.SecondaryText,
+				Type:              track0.Type,
+				UrlHintsSlug:      track0.UrlHintsSlug,
+				UrlHintsSubdomain: track0.UrlHintsSubdomain,
+			})
 		}
 		nextpage := page + 1
-		RetJSON(w, TracksRet{
-			Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v", sort, topcat, subcat, nextpage),
-			Tracks: tracks,
-		})
+		if subcat == "" {
+			if rawLoc != "" {
+				RetJSON(w, TracksRet{
+					Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v?l=%s", sort, topcat, nextpage, rawLoc),
+					Tracks: tracks,
+				})
+			} else {
+				RetJSON(w, TracksRet{
+					Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v", sort, topcat, nextpage),
+					Tracks: tracks,
+				})
+			}
+		} else {
+			if rawLoc != "" {
+				RetJSON(w, TracksRet{
+					Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v?l=%s", sort, topcat, subcat, nextpage, rawLoc),
+					Tracks: tracks,
+				})
+			} else {
+				RetJSON(w, TracksRet{
+					Next:   fmt.Sprintf("/api/genrerank/%v/%v/%v/%v", sort, topcat, subcat, nextpage),
+					Tracks: tracks,
+				})
+			}
+		}
 	})
 
 	logrus.Infof("Starting on %v\n", listenstring)

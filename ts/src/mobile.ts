@@ -47,7 +47,7 @@ import {
     type: string;
     art_id: string;
     featured_track_id: string;
-    location_text: string;
+    location: string;
     playedAt?: Date;
     star: boolean;
   };
@@ -238,13 +238,11 @@ import {
     ratio: Setting<number>;
     children: Array<Filter>;
   };
-  /*
-  type CountryFilter = {
-    id: string;
+  type LocationFilter = {
+    id: number;
     name: string;
     on: Setting<boolean>;
   };
-  */
 
   const epoch = new Date(0, 0, 1, 0, 0, 0, 0);
   const settings = {
@@ -252,7 +250,7 @@ import {
     current: new Setting<[Track, string] | null>("track", null),
     orderFilters: new Array<Filter>(),
     genreFilters: new Array<Filter>(),
-    //countryFilters: new Array<CountryFilter>(),
+    locationFilters: new Array<LocationFilter>(),
     historyEpoch: new DateSetting("history_epoch", epoch),
     starEpoch: new DateSetting("history_epoch", epoch),
   };
@@ -273,18 +271,21 @@ import {
   async function* trackRequester(
     sort: string,
     genre: string,
-    subgenre: string
-    // countries: Map<string, boolean>
+    subgenre: string,
+    locations: number[]
   ): AsyncIterator<Track> {
-    /*
-    const allCountries = countries.get("all") === true;
-    const otherCountries = countries.has("other") === true;
-    */
+    const allLocations = locations.indexOf(-1) !== -1;
     let next = null;
     while (true) {
       const url =
         next === null
-          ? "/api/genrerank/" + sort + "/" + genre + "/" + subgenre
+          ? `/api/genrerank/${sort}/${genre}${
+              subgenre === "all" ? "" : `/${subgenre}`
+            }${
+              allLocations
+                ? ""
+                : `?l=${locations.map((l) => l.toString()).join(",")}`
+            }`
           : next;
       const resp: { next: string; tracks: Array<Track> } = await (
         await fetch(url)
@@ -302,32 +303,6 @@ import {
           }
           track = found;
         }
-        let loc: string | undefined = track.location_text;
-        if (typeof loc === "string") {
-          const splits = loc.split(", ");
-          if (splits.length == 2) {
-            loc = splits[1];
-          } else {
-            loc = "";
-          }
-        } else {
-          loc = "";
-        }
-        /*
-        if (allCountries) {
-          // okay - nop
-        } else {
-          const countryPresent = countries.has(loc);
-          if (!countryPresent && otherCountries) {
-            // okay - nop
-          } else if (countryPresent && countries.get(loc)) {
-            // okay - nop
-          } else {
-            // Country filtered
-            continue;
-          }
-        }
-        */
         yield track;
         next = null;
       }
@@ -338,11 +313,9 @@ import {
     name: string;
     value: string;
   }> = await (await fetch("/api/sorts")).json();
-  /*
-  const constantCountries: Array<string> = await (
-    await fetch("/api/countries")
+  const constantLocations: Record<string, string> = await (
+    await fetch("/api/locations")
   ).json();
-  */
 
   const constantGenres: Array<{
     value: string;
@@ -386,52 +359,60 @@ import {
             children: [],
           },
         ];
-      })().concat(
-        genre.sub.map((subgenre) => {
-          const subgenreSettingId = genreSettingId + "/" + subgenre.value;
-          const subgenreDesc = genreDesc + " / " + subgenre.name;
-          return {
-            id: [genre.value, subgenre.value],
-            name: subgenre.name,
-            desc: subgenreDesc,
-            on: new Setting<boolean>(subgenreSettingId + ".on", false),
-            ratio: new Setting<number>(subgenreSettingId, 1.0),
-            children: [],
-          };
-        })
-      ),
+      })()
+        .concat(
+          genre.sub.map((subgenre) => {
+            const subgenreSettingId = genreSettingId + "/" + subgenre.value;
+            const subgenreDesc = genreDesc + " / " + subgenre.name;
+            return {
+              id: [genre.value, subgenre.value],
+              name: subgenre.name,
+              desc: subgenreDesc,
+              on: new Setting<boolean>(subgenreSettingId + ".on", false),
+              ratio: new Setting<number>(subgenreSettingId, 1.0),
+              children: [],
+            };
+          })
+        )
+        .concat(
+          (() => {
+            const otherSettingId = genreSettingId + "/other.on";
+            return [
+              {
+                id: [genre.value, "other"],
+                name: "other",
+                desc: genreDesc + " / " + "other",
+                on: new Setting<boolean>(otherSettingId, false),
+                ratio: new Setting<number>(otherSettingId + "/other", 1.0),
+                children: [],
+              },
+            ];
+          })()
+        ),
     });
   });
-  /*
   {
-    const allSettingId = "filter/country/all.on";
-    settings.countryFilters.push({
-      id: "all",
+    const allSettingId = "filter/location/all.on";
+    settings.locationFilters.push({
+      id: -1,
       name: "all",
       on: new Setting<boolean>(allSettingId, true),
     });
   }
-  constantCountries.forEach((country) => {
-    const countryId = "filter/country/" + country;
-    const on = new Setting<boolean>(countryId + ".on", country === "top");
-    settings.countryFilters.push({
-      id: country,
-      name: country,
+  for (const id0 of Object.keys(constantLocations)) {
+    const id = parseInt(id0);
+    const name = constantLocations[id];
+    const locationId = `filter/location/${id}`;
+    const on = new Setting<boolean>(locationId + ".on", false);
+    settings.locationFilters.push({
+      id: id,
+      name: name,
       on: on,
     });
-    new Listener(`country ${country} reset generators`, on, async (v) =>
+    new Listener(`location ${name} reset generators`, on, async (v) =>
       trackRequesters.clear()
     );
-  });
-  {
-    const othersSettingId = "filter/country/others.on";
-    settings.countryFilters.push({
-      id: "others",
-      name: "others",
-      on: new Setting<boolean>(othersSettingId, true),
-    });
   }
-  */
 
   // UI setup
   //
@@ -562,28 +543,39 @@ import {
     });
 
     const weightedGenres: { max: number; v: Filter }[] = [];
-    await depthFirst(
-      new CarryIterator(1, settings.genreFilters),
-      async ([carry, filter]: [number, Filter]) => {
-        if (!filter.on.value()) return [][Symbol.iterator]();
-        const scaledRatio = carry * filter.ratio.value();
-        if (filter.children.length === 0) {
-          weightedChoicesPush(weightedGenres, scaledRatio, filter);
-        }
-        return new CarryIterator(scaledRatio, filter.children)[
-          Symbol.iterator
-        ]();
+    for (let top of settings.genreFilters) {
+      if (!top.on.value()) {
+        continue;
       }
-    );
+      const firstChild = top.children[0];
+      if (firstChild.on.value()) {
+        weightedChoicesPush(
+          weightedGenres,
+          top.ratio.value() * firstChild.ratio.value(),
+          firstChild
+        );
+      } else {
+        for (let sub of top.children.slice(1)) {
+          if (!sub.on.value()) {
+            continue;
+          }
+          weightedChoicesPush(
+            weightedGenres,
+            top.ratio.value() * sub.ratio.value(),
+            sub
+          );
+        }
+      }
+    }
 
-    /*
-    const countries = new Map<string, boolean>();
-    settings.countryFilters.forEach((c) => {
-      countries.set(c.id, c.on.value());
+    const locations: number[] = [];
+    settings.locationFilters.forEach((c) => {
+      if (c.on.value()) {
+        locations.push(c.id);
+      }
     });
-    */
 
-    for (let i = 0; i < 100; ++i) {
+    for (let i = 0; i < 1000; ++i) {
       const order = randomChoice(weightedOrders);
       const genre = randomChoice(weightedGenres);
       if (order == null || genre == null) {
@@ -593,8 +585,7 @@ import {
       const gen = mapEnsure(
         trackRequesters,
         order.id[0] + "/" + genre.id.join("/"),
-        () =>
-          trackRequester(order.id[0], genre.id[0], genre.id[1] /* countries*/)
+        () => trackRequester(order.id[0], genre.id[0], genre.id[1], locations)
       );
       const {
         value,
@@ -603,9 +594,10 @@ import {
         value: Track;
         done?: boolean | undefined;
       } = await gen.next();
-      if (done === true) break;
+      if (done === true) continue;
       hydrate(value);
       await settings.current.set([value, order.desc + " / " + genre.desc]);
+      console.log(`Found next track after ${i} attempts`);
       return;
     }
     await settings.current.set(null);
@@ -764,7 +756,7 @@ import {
       const pairs: [string, { on: Setting<boolean> }[]][] = [
         ["Ranking", settings.orderFilters],
         ["Genre", settings.genreFilters],
-        //["Country option", settings.countryFilters],
+        ["Location option", settings.locationFilters],
       ];
       for (const [choiceType, group] of pairs) {
         const xel = document.createElement("p");
@@ -825,13 +817,11 @@ import {
                       new WBindText("player;from", currentTrack, (t) =>
                         t !== null ? "From: " + t[1] : ""
                       ),
-                      /*
-                      new WBindText("player;country", currentTrack, (t) =>
-                        t !== null && !settings.countryFilters[0].on.value()
-                          ? t[0].track.location_text
+                      new WBindText("player;location", currentTrack, (t) =>
+                        t !== null && !settings.locationFilters[0].on.value()
+                          ? t[0].track.location
                           : ""
                       ),
-                      */
                     ],
                   }),
                   wtag(
@@ -920,29 +910,27 @@ import {
                           whbar(),
                           ...settings.genreFilters.map(settingsTree),
                         ],
-                      })
-                      /*
+                      }),
                       new WDetailLevel({
                         open: new ValueChainAnchor<boolean>(false),
-                        summ: whbox(wtext("Country")),
+                        summ: whbox(wtext("Location")),
                         childrenGenerator: () => [
                           whbar(),
-                          ...settings.countryFilters.map((country) =>
+                          ...settings.locationFilters.map((location) =>
                             wtag(
                               "detail",
                               whbox(
                                 new WToggleButton({
                                   klass: "enabled",
                                   text: "enabled",
-                                  bind: country.on,
+                                  bind: location.on,
                                 }),
-                                wtext(country.name)
+                                wtext(location.name)
                               )
                             )
                           ),
                         ],
                       })
-                      */
                     )
                   ),
                   wtag(
@@ -962,7 +950,7 @@ import {
                               type: "text/json",
                             })
                           );
-                          a.download = `bandhiking_settings_${new Date().toISOString()}.json`;
+                          a.download = `bandhiking_settings_${new Date().toISOString()}.bandhiking`;
                           a.click();
                           setTimeout(() => URL.revokeObjectURL(a.href), 60000);
                         },
@@ -972,6 +960,7 @@ import {
                         action: async () => {
                           const input = document.createElement("input");
                           input.setAttribute("type", "file");
+                          input.setAttribute("accept", ".bandhiking");
                           input.style.display = "none";
                           input.addEventListener("change", (_) => {
                             if (input.files?.length === 0) {
