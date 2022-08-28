@@ -129,6 +129,23 @@ import {
   const hydrate = (t: Track): HydratedTrack => {
     let out = hydratedTracks.get(t.id);
     if (out === undefined) {
+      const unkT = t as unknown as any;
+      if (unkT.art_id == undefined) {
+        t = {
+          // pre-migration data
+          id: t.id,
+          url_hints_subdomain: unkT.blob.url_hints.subdomain,
+          url_hints_slug: unkT.blob.url_hints.slug,
+          primary_text: unkT.blob.primary_text,
+          secondary_text: unkT.blob.secondary_text,
+          type: unkT.blob.type,
+          art_id: unkT.blob.art_id,
+          featured_track_id: unkT.blob.featured_track.id,
+          location: "Unknown",
+          playedAt: t.playedAt,
+          star: t.star,
+        };
+      }
       out = {
         track: t,
         star: new DBSetting(dbName, t, "star"),
