@@ -351,6 +351,9 @@ func main() {
 			genreRank := state.GenreRank
 			logrus.Tracef("Fetching %v", url)
 			res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
+			if res != nil {
+				defer res.RawBody().Close()
+			}
 			if err != nil {
 				logrus.Errorf("Failed to request page %v; %+v", url, err)
 				return true
@@ -599,6 +602,9 @@ func main() {
 			track,
 		)
 		res, err := myhttp.R().SetDoNotParseResponse(true).Get(url)
+		if res != nil {
+			defer res.RawBody().Close()
+		}
 		if err != nil {
 			logrus.Errorf("Failed to request page %v; %+v", url, err)
 			w.WriteHeader(500)
