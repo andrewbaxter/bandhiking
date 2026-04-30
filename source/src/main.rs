@@ -56,9 +56,6 @@ use {
 };
 
 good_module!(pub dbm, "bandhiking");
-#[derive(RustEmbed)]
-#[folder = "$STATIC_DIR"]
-struct StaticAssets;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Sort {
@@ -191,32 +188,42 @@ async fn scrape_inner(log: &Log, state: &Arc<State>) {
         let db = state.db.clone();
         match spawn_blocking(move || {
             let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
-            let to_delete =
-                good_ormning::sqlite::good_query_many!(
-                    "bandhiking",
-                    r#"select "genre" as "genre", "secondary" as "secondary", "sort" as "sort", "track" as "track" from (select "genrerank"."genre" as "genre", "genrerank"."secondary" as "secondary", "genrerank"."sort" as "sort", "genrerank"."track" as "track", row_number() over (partition by "genrerank"."genre", "genrerank"."secondary", "genrerank"."sort", "track"."location" order by "genrerank"."date" desc, "genrerank"."rank" desc) as "rn" from "genrerank" left join "track" on "genrerank"."track" = "track"."id") as "ranked" where "rn" > ?1"#;
-                    dbm::DbBandhiking1(&mut *db),
-                    p1: i64 = 5000i64
-                )
-                .context("Failed to query rows to prune")?;
-            for row in to_delete {
-                good_ormning::sqlite::good_query!(
-                    "bandhiking",
-                    r#"delete from "genrerank" where "genre" = ?1 and "secondary" = ?2 and "sort" = ?3 and "track" = ?4"#;
-                    dbm::DbBandhiking1(&mut *db),
-                    p1: string = &row.genre,
-                    p2: string = &row.secondary,
-                    p3: string = &row.sort,
-                    p4: i64 = row.track
-                )
-                .context("Failed to delete pruned genrerank row")?;
-            }
+            good_ormning::sqlite::good_query!(
+                "bandhiking",
+                r#"delete from "genrerank"
+                        where ("genre", "secondary", "sort", "track") in (
+                            select "genre", "secondary", "sort", "track" from (
+                                select 
+                                    "genrerank"."genre" as "genre", 
+                                    "genrerank"."secondary" as "secondary", 
+                                    "genrerank"."sort" as "sort", 
+                                    "genrerank"."track" as "track", 
+                                    row_number()
+                                    over (
+                                        partition by 
+                                            "genrerank"."genre", 
+                                            "genrerank"."secondary", 
+                                            "genrerank"."sort", 
+                                            "track"."location" 
+                                        order by 
+                                            "genrerank"."date" desc, 
+                                            "genrerank"."rank" desc
+                                    )
+                                    as "rn"
+                                    from "genrerank"
+                                left join "track" on "genrerank"."track" = "track"."id"
+                            )
+                            where "rn" > ?1
+                        )
+                "#;
+                dbm::DbBandhiking1(&mut *db),
+                p1: i64 = 5000i64
+            ).context("Failed to delete pruned genrerank rows")?;
             good_ormning::sqlite::good_query!(
                 "bandhiking",
                 r#"delete from "track" where "id" not in (select distinct "track" from "genrerank")"#;
                 dbm::DbBandhiking1(&mut *db)
-            )
-            .context("Failed to delete orphan tracks")?;
+            ).context("Failed to delete orphan tracks")?;
             return Ok(()) as Result<(), loga::Error>;
         }).await {
             Ok(Ok(())) => { },
@@ -407,26 +414,73 @@ async fn rankpage(
             let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
             good_ormning::sqlite::good_query!(
                 "bandhiking",
-                r#"insert into "track" ("id", "art_id", "featured_track_id", "location_text", "location", "primary_text", "secondary_text", "type", "url_hints_slug", "url_hints_subdomain") values (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'a', ?8, ?9) on conflict do nothing"#;
+                r#"
+                    insert into "track"
+                        (
+                            "id", 
+                            "art_id", 
+                            "featured_track_id", 
+                            "location_text", 
+                            "location", 
+                            "primary_text", 
+                            "secondary_text", 
+                            "type", 
+                            "url_hints_slug", 
+                            "url_hints_subdomain"
+                        )
+                        values (
+                            $id, 
+                            $art_id, 
+                            $featured_track_id, 
+                            $location_text, 
+                            $location, 
+                            $primary_text, 
+                            $secondary_text, 
+                            'a', 
+                            $url_hints_debug, 
+                            $url_hints_subdomain
+                        )
+                    on conflict do nothing
+                "#;
                 dbm::DbBandhiking1(&mut *db),
-                p1: i64 = track_id,
-                p2: i64 = art_id,
-                p3: i64 = featured_track_id,
-                p4: opt string = location_text.as_deref(),
-                p5: i32 = location,
-                p6: string = &primary_text,
-                p7: string = &secondary_text,
-                p8: string = &url_hints_slug,
-                p9: string = &url_hints_subdomain
+                id: i64 = track_id,
+                art_id: i64 = art_id,
+                featured_track_id: i64 = featured_track_id,
+                location_text: opt string = location_text.as_deref(),
+                location: i32 = location,
+                primary_text: string = & primary_text,
+                secondary_text: string = & secondary_text,
+                url_hints_debug: string = & url_hints_slug,
+                url_hints_subdomain: string = & url_hints_subdomain
             ).context("Failed to insert track")?;
             good_ormning::sqlite::good_query!(
                 "bandhiking",
-                r#"insert into "genrerank" ("date", "genre", "secondary", "sort", "rank", "track") values (?1, ?2, ?3, ?4, ?5, ?6) on conflict ("genre", "secondary", "sort", "track") do update set "date" = ?1, "rank" = ?5"#;
+                r#"
+                    insert into "genrerank"
+                        (
+                            "date", 
+                            "genre", 
+                            "secondary", 
+                            "sort", 
+                            "rank", 
+                            "track"
+                        )
+                        values (
+                            $date,
+                            $genre,
+                            $secondary,
+                            $sort,
+                            $rank,
+                            $track
+                        )
+                    on conflict ("genre", "secondary", "sort", "track")
+                        do update set "date" = $date, "rank" = $rank
+                "#;
                 dbm::DbBandhiking1(&mut *db),
                 p1: i64 = date,
-                p2: string = &topcat2,
-                p3: string = &subcat2,
-                p4: string = &sort2,
+                p2: string = & topcat2,
+                p3: string = & subcat2,
+                p4: string = & sort2,
                 p5: i32 = genre_rank,
                 p6: i64 = track_id
             ).context("Failed to insert genrerank")?;
@@ -459,6 +513,11 @@ fn serve_static(subpath: &str) -> Response<Body> {
     } else {
         path
     };
+
+    #[derive(RustEmbed)]
+    #[folder = "$STATIC_DIR"]
+    struct StaticAssets;
+
     let Some(content) = StaticAssets::get(path) else {
         return response_404();
     };
@@ -505,7 +564,7 @@ async fn main() {
     let db = Arc::new(Mutex::new(conn));
     let http_client =
         reqwest::Client::builder()
-            .user_agent("https://gitlab.com/rendaw/bandhiking")
+            .user_agent("https://gitlab.com/andrewbaxter/bandhiking")
             .build()
             .expect("Failed to build HTTP client");
     let state = Arc::new(State {
@@ -570,25 +629,33 @@ async fn main() {
             let db = state.db.clone();
             let rows = match spawn_blocking(move || {
                 let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
-                let rows =
-                    good_ormning::sqlite::good_query_many!(
-                        "bandhiking",
-                        r#"select "genrerank"."sort" as "sort", "genrerank"."genre" as "genre", "genrerank"."secondary" as "secondary", "track"."location" as "location", count(1) as "count" from "genrerank" inner join "track" on "genrerank"."track" = "track"."id" group by "genrerank"."sort", "genrerank"."genre", "genrerank"."secondary", "track"."location""#;
-                        dbm::DbBandhiking1(&mut *db)
-                    )
-                    .context("Count query failed")?;
-                return Ok(
-                    rows
-                        .into_iter()
-                        .map(|row| CountRow {
-                            sort: row.sort,
-                            genre: row.genre,
-                            secondary: row.secondary,
-                            location: row.location as i64,
-                            count: row.count,
-                        })
-                        .collect(),
-                ) as Result<Vec<CountRow>, loga::Error>;
+                let rows = good_ormning::sqlite::good_query_many!(
+                    "bandhiking",
+                    r#"
+                        select 
+                            "genrerank"."sort" as "sort", 
+                            "genrerank"."genre" as "genre", 
+                            "genrerank"."secondary" as "secondary", 
+                            "track"."location" as "location", 
+                            count(1) as "count" 
+                        from "genrerank"
+                        inner join 
+                            "track" on "genrerank"."track" = "track"."id" 
+                        group by 
+                            "genrerank"."sort", 
+                            "genrerank"."genre", 
+                            "genrerank"."secondary", 
+                            "track"."location"
+                    "#;
+                    dbm::DbBandhiking1(&mut *db)
+                ).context("Count query failed")?;
+                return Ok(rows.into_iter().map(|row| CountRow {
+                    sort: row.sort,
+                    genre: row.genre,
+                    secondary: row.secondary,
+                    location: row.location as i64,
+                    count: row.count,
+                }).collect(),) as Result<Vec<CountRow>, loga::Error>;
             }).await {
                 Ok(Ok(v)) => v,
                 Ok(Err(e)) => return response_500(format!("DB error: {}", e)),
@@ -709,16 +776,47 @@ async fn main() {
                     (None, None) => {
                         good_ormning::sqlite::good_query_many!(
                             "bandhiking",
-                            r#"select "id" as "id", "art_id" as "art_id", "featured_track_id" as "featured_track_id", "location" as "location", "primary_text" as "primary_text", "secondary_text" as "secondary_text", "track_type" as "track_type", "url_hints_slug" as "url_hints_slug", "url_hints_subdomain" as "url_hints_subdomain" from (select "track"."id" as "id", "track"."art_id" as "art_id", "track"."featured_track_id" as "featured_track_id", "track"."location" as "location", "track"."primary_text" as "primary_text", "track"."secondary_text" as "secondary_text", "track"."type" as "track_type", "track"."url_hints_slug" as "url_hints_slug", "track"."url_hints_subdomain" as "url_hints_subdomain", row_number() over (order by "genrerank"."date" desc, "genrerank"."rank" desc) as "rn" from "genrerank" inner join "track" on "genrerank"."track" = "track"."id" where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2) as "rows" where "rn" > ?3 and "rn" <= ?4"#;
+                            r#"
+                                select 
+                                    "id" as "id",
+                                    "art_id" as "art_id", 
+                                    "featured_track_id" as "featured_track_id", 
+                                    "location" as "location", 
+                                    "primary_text" as "primary_text", 
+                                    "secondary_text" as "secondary_text", 
+                                    "track_type" as "track_type", 
+                                    "url_hints_slug" as "url_hints_slug", 
+                                    "url_hints_subdomain" as "url_hints_subdomain"
+                                from (
+                                    select 
+                                        "track"."id" as "id", 
+                                        "track"."art_id" as "art_id", 
+                                        "track"."featured_track_id" as "featured_track_id", 
+                                        "track"."location" as "location", 
+                                        "track"."primary_text" as "primary_text", 
+                                        "track"."secondary_text" as "secondary_text", 
+                                        "track"."type" as "track_type", 
+                                        "track"."url_hints_slug" as "url_hints_slug", 
+                                        "track"."url_hints_subdomain" as "url_hints_subdomain", 
+                                        row_number()
+                                    over (
+                                        order by 
+                                            "genrerank"."date" desc, 
+                                            "genrerank"."rank" desc
+                                    ) as "rn"
+                                    from "genrerank"
+                                    inner join "track"
+                                        on "genrerank"."track" = "track"."id"
+                                    where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2
+                                ) as "rows"
+                                where "rn" > ?3 and "rn" <= ?4
+                            "#;
                             dbm::DbBandhiking1(&mut *db),
-                            p1: string = &sort,
-                            p2: string = &topcat,
+                            p1: string = & sort,
+                            p2: string = & topcat,
                             p3: i64 = offset,
                             p4: i64 = offset + pagesize
-                        )
-                        .context("DB query failed")?
-                        .into_iter()
-                        .map(|row| {
+                        ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
                                 row.art_id,
@@ -731,23 +829,19 @@ async fn main() {
                                 row.url_hints_subdomain,
                                 &id_to_name,
                             )
-                        })
-                        .collect()
+                        }).collect()
                     },
                     (None, Some(locs)) => {
                         good_ormning::sqlite::good_query_many!(
                             "bandhiking",
                             r#"select "id" as "id", "art_id" as "art_id", "featured_track_id" as "featured_track_id", "location" as "location", "primary_text" as "primary_text", "secondary_text" as "secondary_text", "track_type" as "track_type", "url_hints_slug" as "url_hints_slug", "url_hints_subdomain" as "url_hints_subdomain" from (select "track"."id" as "id", "track"."art_id" as "art_id", "track"."featured_track_id" as "featured_track_id", "track"."location" as "location", "track"."primary_text" as "primary_text", "track"."secondary_text" as "secondary_text", "track"."type" as "track_type", "track"."url_hints_slug" as "url_hints_slug", "track"."url_hints_subdomain" as "url_hints_subdomain", row_number() over (order by "genrerank"."date" desc, "genrerank"."rank" desc) as "rn" from "genrerank" inner join "track" on "genrerank"."track" = "track"."id" where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2 and "track"."location" in (select value from rarray(?3))) as "rows" where "rn" > ?4 and "rn" <= ?5"#;
                             dbm::DbBandhiking1(&mut *db),
-                            p1: string = &sort,
-                            p2: string = &topcat,
+                            p1: string = & sort,
+                            p2: string = & topcat,
                             p3: arr i32 = locs,
                             p4: i64 = offset,
                             p5: i64 = offset + pagesize
-                        )
-                        .context("DB query failed")?
-                        .into_iter()
-                        .map(|row| {
+                        ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
                                 row.art_id,
@@ -760,23 +854,19 @@ async fn main() {
                                 row.url_hints_subdomain,
                                 &id_to_name,
                             )
-                        })
-                        .collect()
+                        }).collect()
                     },
                     (Some(sub), None) => {
                         good_ormning::sqlite::good_query_many!(
                             "bandhiking",
                             r#"select "id" as "id", "art_id" as "art_id", "featured_track_id" as "featured_track_id", "location" as "location", "primary_text" as "primary_text", "secondary_text" as "secondary_text", "track_type" as "track_type", "url_hints_slug" as "url_hints_slug", "url_hints_subdomain" as "url_hints_subdomain" from (select "track"."id" as "id", "track"."art_id" as "art_id", "track"."featured_track_id" as "featured_track_id", "track"."location" as "location", "track"."primary_text" as "primary_text", "track"."secondary_text" as "secondary_text", "track"."type" as "track_type", "track"."url_hints_slug" as "url_hints_slug", "track"."url_hints_subdomain" as "url_hints_subdomain", row_number() over (order by "genrerank"."date" desc, "genrerank"."rank" desc) as "rn" from "genrerank" inner join "track" on "genrerank"."track" = "track"."id" where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2 and "genrerank"."secondary" = ?3) as "rows" where "rn" > ?4 and "rn" <= ?5"#;
                             dbm::DbBandhiking1(&mut *db),
-                            p1: string = &sort,
-                            p2: string = &topcat,
-                            p3: string = &sub,
+                            p1: string = & sort,
+                            p2: string = & topcat,
+                            p3: string = & sub,
                             p4: i64 = offset,
                             p5: i64 = offset + pagesize
-                        )
-                        .context("DB query failed")?
-                        .into_iter()
-                        .map(|row| {
+                        ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
                                 row.art_id,
@@ -789,24 +879,20 @@ async fn main() {
                                 row.url_hints_subdomain,
                                 &id_to_name,
                             )
-                        })
-                        .collect()
+                        }).collect()
                     },
                     (Some(sub), Some(locs)) => {
                         good_ormning::sqlite::good_query_many!(
                             "bandhiking",
                             r#"select "id" as "id", "art_id" as "art_id", "featured_track_id" as "featured_track_id", "location" as "location", "primary_text" as "primary_text", "secondary_text" as "secondary_text", "track_type" as "track_type", "url_hints_slug" as "url_hints_slug", "url_hints_subdomain" as "url_hints_subdomain" from (select "track"."id" as "id", "track"."art_id" as "art_id", "track"."featured_track_id" as "featured_track_id", "track"."location" as "location", "track"."primary_text" as "primary_text", "track"."secondary_text" as "secondary_text", "track"."type" as "track_type", "track"."url_hints_slug" as "url_hints_slug", "track"."url_hints_subdomain" as "url_hints_subdomain", row_number() over (order by "genrerank"."date" desc, "genrerank"."rank" desc) as "rn" from "genrerank" inner join "track" on "genrerank"."track" = "track"."id" where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2 and "genrerank"."secondary" = ?3 and "track"."location" in (select value from rarray(?4))) as "rows" where "rn" > ?5 and "rn" <= ?6"#;
                             dbm::DbBandhiking1(&mut *db),
-                            p1: string = &sort,
-                            p2: string = &topcat,
-                            p3: string = &sub,
+                            p1: string = & sort,
+                            p2: string = & topcat,
+                            p3: string = & sub,
                             p4: arr i32 = locs,
                             p5: i64 = offset,
                             p6: i64 = offset + pagesize
-                        )
-                        .context("DB query failed")?
-                        .into_iter()
-                        .map(|row| {
+                        ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
                                 row.art_id,
@@ -819,8 +905,7 @@ async fn main() {
                                 row.url_hints_subdomain,
                                 &id_to_name,
                             )
-                        })
-                        .collect()
+                        }).collect()
                     },
                 };
                 return Ok(tracks) as Result<Vec<TrackOut>, loga::Error>;

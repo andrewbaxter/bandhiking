@@ -1,29 +1,19 @@
 { pkgs ? import <nixpkgs> { } }:
 let
-  fenix =
-    import
-      (fetchTarball "https://github.com/nix-community/fenix/archive/1a79901b0e37ca189944e24d9601c8426675de50.zip")
-      { };
-  toolchain = fenix.combine [
-    fenix.latest.cargo
-    fenix.latest.rustc
-    fenix.targets.x86_64-unknown-linux-musl.latest.rust-std
-  ];
-  naersk = pkgs.callPackage
-    (fetchTarball "https://github.com/nix-community/naersk/archive/378614f37a6bee5a3f2ef4f825a73d948d3ae921.zip")
-    {
-      cargo = toolchain;
-      rustc = toolchain;
-    };
+  tsDeps = pkgs.fetchNpmDeps {
+    src = pkgs.lib.cleanSource ./ts;
+    hash = "sha256-0iRc4ddAPddeKpnS2nZZEwEOGFaQcdBui0OiHApViR4=";
+  };
   staticAssets = pkgs.stdenv.mkDerivation {
     name = "bandhiking-static";
     src = pkgs.lib.cleanSource ./.;
-    nativeBuildInputs = [ pkgs.nodejs ];
+    nativeBuildInputs = [ pkgs.nodejs pkgs.npmHooks.npmConfigHook ];
+    npmDeps = tsDeps;
+    npmRoot = "ts";
     buildPhase = ''
       cp -r prestatic static
       (
         cd ts
-        npm ci
         node_modules/.bin/tsc --build tsconfig.json
         node_modules/.bin/rollup -c
         rm src/*.js
@@ -34,11 +24,24 @@ let
       cp -r static/. $out/
     '';
   };
+  gitHash = "sha256-G8GDhhem1KveDF/UBSgbaakkAorVsLjPlRNH0ll2l3k=";
 in
-naersk.buildPackage {
-  src = pkgs.lib.cleanSource ./.;
-  CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-  CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+pkgs.pkgsStatic.rustPlatform.buildRustPackage {
+  pname = "bandhiking";
+  version = "0.1.0";
+  src = pkgs.lib.cleanSourceWith {
+    name = "bandhiking-src";
+    src = ../.;
+  };
+  sourceRoot = "bandhiking-src/source";
+  cargoLock = {
+    lockFile = ./Cargo.lock;
+    outputHashes = {
+      "good-ormning-0.4.1" = gitHash;
+      "good-ormning-core-0.1.0" = gitHash;
+      "good-ormning-macros-0.1.0" = gitHash;
+    };
+  };
   STATIC_DIR = "${staticAssets}";
-  nativeBuildInputs = with pkgs; [ musl.dev pkg-config ];
+  nativeBuildInputs = [ pkgs.pkg-config ];
 }
