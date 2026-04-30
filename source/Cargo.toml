@@ -1,0 +1,47 @@
+[package]
+name = "bandhiking"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+flowcontrol = "0.2"
+good-ormning = { git = "https://github.com/andrewbaxter/good-ormning", branch = "v0b", features = [
+    "sqlite",
+    "chrono",
+    "jiff",
+] }
+http = "1"
+htwrap = "0.15"
+loga = "0.5"
+mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-webpki-roots",
+    "json",
+] }
+rusqlite = { version = "0.37", features = ["bundled", "array"] }
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "time",
+] }
+unicode-normalization = "0.1"
+
+[build-dependencies]
+good-ormning = { git = "https://github.com/andrewbaxter/good-ormning", branch = "v0b", features = [
+    "sqlite",
+    "chrono",
+    "jiff",
+] }
+serde_json = "1"
+
+[lints.clippy]
+all = "allow"
