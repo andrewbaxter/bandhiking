@@ -24,7 +24,8 @@ pub fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../locations/locations.go");
 
-    // Provide fallback STATIC_DIR for local cargo check/build (nix build sets this externally)
+    // Provide fallback STATIC_DIR for local cargo check/build (nix build sets this
+    // externally)
     if std::env::var("STATIC_DIR").is_err() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let fallback = format!("{}/static", manifest_dir);
@@ -34,7 +35,6 @@ pub fn main() {
     // Generate DB schema
     {
         let v = Version::new();
-
         let track = v.table("track");
         let id = track.field("id", field_i64().build());
         let _art_id = track.field("art_id", field_i64().build());
@@ -47,7 +47,6 @@ pub fn main() {
         let _url_hints_slug = track.field("url_hints_slug", field_str().build());
         let _url_hints_subdomain = track.field("url_hints_subdomain", field_str().build());
         track.primary_key("track_pk", &[&id]);
-
         let genrerank = v.table("genrerank");
         let genre = genrerank.field("genre", field_str().build());
         let secondary = genrerank.field("secondary", field_str().build());
@@ -56,8 +55,10 @@ pub fn main() {
         let _rank = genrerank.field("rank", field_i32().build());
         let track_ref = genrerank.field("track", field_i64().build());
         genrerank.unique_index("genrerank_unique", &[&genre, &secondary, &sort, &track_ref]);
-
-        generate(Some("bandhiking"), vec![(1usize, v.build())]).unwrap();
+        generate(good_ormning::SqliteGenerateArgs {
+            versions: vec![(1usize, v.build())],
+            ..Default::default()
+        }).unwrap();
     }
 
     // Parse locations.go and write JSON data files for use at runtime
@@ -85,7 +86,6 @@ fn parse_locations(go_path: &Path, out_dir: &str) {
     let mut state = ParseState::Init;
     let mut raw_to_id: HashMap<String, i32> = HashMap::new();
     let mut id_to_name: Vec<(i32, String)> = Vec::new();
-
     for line in reader.lines() {
         let line = line.expect("Failed to read locations.go line");
         let line = line.trim();
@@ -105,9 +105,7 @@ fn parse_locations(go_path: &Path, out_dir: &str) {
                     if let Some(colon) = line.rfind(':') {
                         let key_part = line[..colon].trim();
                         let val_part = line[colon + 1..].trim();
-                        if let (Some(key), Ok(val)) =
-                            (parse_go_string(key_part), val_part.parse::<i32>())
-                        {
+                        if let (Some(key), Ok(val)) = (parse_go_string(key_part), val_part.parse::<i32>()) {
                             raw_to_id.insert(key, val);
                         }
                     }
@@ -121,9 +119,7 @@ fn parse_locations(go_path: &Path, out_dir: &str) {
                     if let Some(colon) = line.find(':') {
                         let key_part = line[..colon].trim();
                         let val_part = line[colon + 1..].trim();
-                        if let (Ok(key), Some(val)) =
-                            (key_part.parse::<i32>(), parse_go_string(val_part))
-                        {
+                        if let (Ok(key), Some(val)) = (key_part.parse::<i32>(), parse_go_string(val_part)) {
                             id_to_name.push((key, val));
                         }
                     }
@@ -131,16 +127,9 @@ fn parse_locations(go_path: &Path, out_dir: &str) {
             },
         }
     }
-
-    fs::write(
-        format!("{}/locations_raw_to_id.json", out_dir),
-        serde_json::to_string(&raw_to_id).unwrap(),
-    )
-    .unwrap();
-
+    fs::write(format!("{}/locations_raw_to_id.json", out_dir), serde_json::to_string(&raw_to_id).unwrap()).unwrap();
     fs::write(
         format!("{}/locations_id_to_name.json", out_dir),
         serde_json::to_string(&id_to_name).unwrap(),
-    )
-    .unwrap();
+    ).unwrap();
 }

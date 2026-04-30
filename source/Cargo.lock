@@ -631,7 +631,7 @@ dependencies = [
 [[package]]
 name = "good-ormning"
 version = "0.4.1"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#8e4365742f871fb0b58688269596fe82df4d894d"
+source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -660,7 +660,7 @@ dependencies = [
 [[package]]
 name = "good-ormning-core"
 version = "0.1.0"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#8e4365742f871fb0b58688269596fe82df4d894d"
+source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -685,7 +685,7 @@ dependencies = [
 [[package]]
 name = "good-ormning-macros"
 version = "0.1.0"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#8e4365742f871fb0b58688269596fe82df4d894d"
+source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
 dependencies = [
  "convert_case 0.7.1",
  "good-ormning-core",
