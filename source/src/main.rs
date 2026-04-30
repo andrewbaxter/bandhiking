@@ -58,6 +58,7 @@ use {
         },
     },
     unicode_normalization::UnicodeNormalization,
+    urlencoding,
 };
 
 good_module!(pub dbm);
@@ -251,7 +252,7 @@ async fn scrape_inner(log: &Log, state: &Arc<State>) {
                 let all_url =
                     format!(
                         "https://bandcamp.com/api/discover/3/get_web?g={}&s={}&p={{page}}&gn=0&f=all&w=0",
-                        urlencoding_encode(&topcat.value),
+                        urlencoding::encode(&topcat.value),
                         sort,
                     );
                 if rankpage(log, state, &mut pages, date, &all_key, &all_url, sort, &topcat.value, "other").await {
@@ -262,8 +263,8 @@ async fn scrape_inner(log: &Log, state: &Arc<State>) {
                     let sub_url =
                         format!(
                             "https://bandcamp.com/api/discover/3/get_web?g={}&t={}&s={}&p={{page}}&gn=0&f=all&w=0",
-                            urlencoding_encode(&topcat.value),
-                            urlencoding_encode(&subcat.value),
+                            urlencoding::encode(&topcat.value),
+                            urlencoding::encode(&subcat.value),
                             sort,
                         );
                     if rankpage(
@@ -293,21 +294,6 @@ async fn scrape_inner(log: &Log, state: &Arc<State>) {
         Ok(Err(e)) => log.log_err(loga::WARN, e),
         Err(e) => log.log_err(loga::WARN, loga::err(format!("Vacuum task failed: {}", e))),
     }
-}
-
-fn urlencoding_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            },
-            _ => {
-                out.push_str(&format!("%{:02X}", b));
-            },
-        }
-    }
-    return out;
 }
 
 async fn rankpage(
@@ -550,11 +536,11 @@ async fn main() {
         serde_json::from_str(include_str!("./genres.json")).expect("Failed to parse genres.json");
     let raw_to_id_data: HashMap<String, i32> =
         serde_json::from_str(
-            include_str!(concat!(env!("OUT_DIR"), "/locations_raw_to_id.json")),
+            include_str!("locations_raw_to_id.json"),
         ).expect("Failed to parse locations_raw_to_id.json");
     let id_to_name_pairs: Vec<(i32, String)> =
         serde_json::from_str(
-            include_str!(concat!(env!("OUT_DIR"), "/locations_id_to_name.json")),
+            include_str!("locations_id_to_name.json"),
         ).expect("Failed to parse locations_id_to_name.json");
     let max_id = id_to_name_pairs.iter().map(|(id, _)| *id).max().unwrap_or(0) as usize;
     let mut id_to_name_vec: Vec<Option<String>> = vec![
