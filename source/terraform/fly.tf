@@ -1,14 +1,14 @@
 resource "fly_app" "app" {
-  name                     = var.fly_app_name
-  org                      = var.fly_org
+  name                     = "bandhiking"
+  org                      = "personal"
   assign_shared_ip_address = true
 }
 
 resource "fly_machine" "app" {
   app    = fly_app.app.name
   image  = docker_registry_image.app.name
-  region = var.fly_region
-  name   = var.fly_app_name
+  region = "iad"
+  name   = "bandhiking"
 
   services = [{
     internal_port = 8080
@@ -25,5 +25,5 @@ resource "fly_machine" "app" {
 
 resource "fly_cert" "app" {
   app      = fly_app.app.name
-  hostname = "${var.dns_record_name}.${var.dnsimple_zone}"
+  hostname = "bandhiking2.isandrew.com"
 }

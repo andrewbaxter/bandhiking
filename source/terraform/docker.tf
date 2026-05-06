@@ -1,5 +1,5 @@
 resource "docker_image" "app" {
-  name = "registry.fly.io/${var.fly_app_name}:${var.image_tag}"
+  name = "registry.fly.io/bandhiking:latest"
   build {
     context    = "${path.module}/.."
     dockerfile = "Dockerfile"
