@@ -83,11 +83,34 @@ resource "fly_app" "app" {
   assign_shared_ip_address = true
 }
 
-resource "fly_machine" "app" {
+resource "fly_volume" "db" {
   app    = fly_app.app.name
-  image  = docker_registry_image.app.name
+  name   = "${local.app_name}_db"
   region = "lax"
-  name   = local.app_name
+  size   = 2
+}
+
+locals {
+  data_path = "/data"
+}
+
+resource "fly_machine" "app" {
+  app      = fly_app.app.name
+  image    = docker_registry_image.app.name
+  region   = "lax"
+  name     = local.app_name
+  cpus     = 1
+  cpu_type = "shared"
+  memory   = 256
+
+  env = {
+    DB_PATH = "${local.data_path}/bandhiking.db"
+  }
+
+  mounts = [{
+    path   = local.data_path
+    volume = fly_volume.db.id
+  }]
 
   services = [{
     internal_port = 8080
