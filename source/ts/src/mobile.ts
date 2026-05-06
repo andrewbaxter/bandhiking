@@ -1,4 +1,3 @@
-import { depthFirst } from "./helper";
 import {
   ValueChainAnchor,
   ChainAnchor,
@@ -29,7 +28,6 @@ import {
   wbindList,
   wtabs,
   WBindText,
-  wspacer,
   spacer,
   wtext,
   whbar,
@@ -99,7 +97,7 @@ import {
 
   class DBSetting<
     S extends keyof MyDB,
-    K extends keyof MyDB[S]["value"]
+    K extends keyof MyDB[S]["value"],
   > extends ValueChainAnchor<MyDB[S]["value"][K]> {
     parent: MyDB[S]["value"];
     store: S;
@@ -270,6 +268,7 @@ import {
     locationFilters: new Array<LocationFilter>(),
     historyEpoch: new DateSetting("history_epoch", epoch),
     starEpoch: new DateSetting("history_epoch", epoch),
+    maxSongLength: new Setting<number>("max_song_length", 60),
   };
 
   const currentTrack = new (class extends ChainLink<
@@ -289,7 +288,7 @@ import {
     sort: string,
     genre: string,
     subgenre: string,
-    locations: number[]
+    locations: number[],
   ): AsyncIterator<Track> {
     const allLocations = locations.indexOf(-1) !== -1;
     let next = null;
@@ -389,7 +388,7 @@ import {
               ratio: new Setting<number>(subgenreSettingId, 1.0),
               children: [],
             };
-          })
+          }),
         )
         .concat(
           (() => {
@@ -404,7 +403,7 @@ import {
                 children: [],
               },
             ];
-          })()
+          })(),
         ),
     });
   });
@@ -427,7 +426,7 @@ import {
       on: on,
     });
     new Listener(`location ${name} reset generators`, on, async (v) =>
-      trackRequesters.clear()
+      trackRequesters.clear(),
     );
   }
 
@@ -436,10 +435,19 @@ import {
   let playBlocked = true;
   class WPlayer implements Widget {
     frame: HTMLIFrameElement;
+    maxSongInterval: number | null;
+    playTimeSeconds: number;
+    isPlaying: boolean;
+    onEnd: () => Promise<void>;
+
     constructor(
       track: ChainSource<[HydratedTrack, string] | null>,
-      onEnd: () => Promise<void>
+      onEnd: () => Promise<void>,
     ) {
+      this.maxSongInterval = null;
+      this.playTimeSeconds = 0;
+      this.isPlaying = false;
+      this.onEnd = onEnd;
       this.frame = document.createElement("iframe");
       this.frame.classList.add("w_player");
       this.frame.style.border = "0";
@@ -447,6 +455,7 @@ import {
       this.frame.style.maxWidth = "100%";
       this.frame.style.height = "470px";
       this.frame.setAttribute("seamless", "");
+      const wplayer = this;
       bindEvent(this.frame, "load", async (_) => {
         interface X extends Window {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -461,10 +470,16 @@ import {
             settings.volume,
             async (v: number): Promise<void> => {
               this.setvol(v);
-            }
+            },
           );
+          if (newstate === "PLAYING") {
+            wplayer.isPlaying = true;
+          } else {
+            wplayer.isPlaying = false;
+          }
           if (newstate === "COMPLETED") {
             playBlocked = false;
+            wplayer.clearMaxSongTimer();
             // eslint-disable-next-line @typescript-eslint/no-floating-promises
             event(async () => {
               settings.volume.dests.delete(volListener);
@@ -487,16 +502,53 @@ import {
         "player;track",
         track,
         async (v: [HydratedTrack, string] | null): Promise<void> => {
-          if (v === null) this.frame.src = "";
-          else this.frame.src = trackPlayerUrl(v[0].track);
-        }
+          wplayer.clearMaxSongTimer();
+          if (v === null) {
+            this.frame.src = "";
+          } else {
+            this.frame.src = trackPlayerUrl(v[0].track);
+            wplayer.startMaxSongTimer();
+          }
+        },
       );
     }
+
+    clearMaxSongTimer(): void {
+      if (this.maxSongInterval !== null) {
+        clearInterval(this.maxSongInterval);
+        this.maxSongInterval = null;
+      }
+      this.playTimeSeconds = 0;
+      this.isPlaying = false;
+    }
+
+    startMaxSongTimer(): void {
+      const maxLen = settings.maxSongLength.value() * 60;
+      if (maxLen <= 0) return;
+      this.maxSongInterval = window.setInterval(() => {
+        const currentMax = settings.maxSongLength.value() * 60;
+        if (currentMax <= 0) {
+          this.clearMaxSongTimer();
+          return;
+        }
+        if (this.isPlaying) {
+          this.playTimeSeconds += 1;
+          if (this.playTimeSeconds >= currentMax) {
+            this.clearMaxSongTimer();
+            // eslint-disable-next-line @typescript-eslint/no-floating-promises
+            event(async () => {
+              await this.onEnd();
+            });
+          }
+        }
+      }, 1000);
+    }
+
     getDOM(): Element {
       return this.frame;
     }
     destroy(): void {
-      throw new Error("Method not implemented.");
+      this.clearMaxSongTimer();
     }
   }
 
@@ -523,7 +575,7 @@ import {
   const weightedChoicesPush = <T extends unknown>(
     ranges: Array<{ max: number; v: T }>,
     weight: number,
-    v: T
+    v: T,
   ) => {
     const last = ranges[ranges.length - 1];
     const scoreSum = last == undefined ? 0 : last.max;
@@ -531,7 +583,7 @@ import {
   };
 
   const randomChoice = <T extends unknown>(
-    ranges: Array<{ max: number; v: T }>
+    ranges: Array<{ max: number; v: T }>,
   ): T | null => {
     const scoreSum = ranges[ranges.length - 1].max;
     const target = Math.random() * scoreSum;
@@ -569,7 +621,7 @@ import {
         weightedChoicesPush(
           weightedGenres,
           top.ratio.value() * firstChild.ratio.value(),
-          firstChild
+          firstChild,
         );
       } else {
         for (let sub of top.children.slice(1)) {
@@ -579,7 +631,7 @@ import {
           weightedChoicesPush(
             weightedGenres,
             top.ratio.value() * sub.ratio.value(),
-            sub
+            sub,
           );
         }
       }
@@ -602,7 +654,7 @@ import {
       const gen = mapEnsure(
         trackRequesters,
         order.id[0] + "/" + genre.id.join("/"),
-        () => trackRequester(order.id[0], genre.id[0], genre.id[1], locations)
+        () => trackRequester(order.id[0], genre.id[0], genre.id[1], locations),
       );
       const {
         value,
@@ -652,12 +704,12 @@ import {
       title.href = trackUrl(track.track);
       title.target = "_blank";
       title.textContent = `${trackArtist(track.track)} - ${trackName(
-        track.track
+        track.track,
       )}`;
       const image = wimageLink(
         trackArtUrl(track.track),
         title.textContent,
-        trackUrl(track.track)
+        trackUrl(track.track),
       );
       this.toggle = new WToggleButton({
         klass: "star_check",
@@ -678,8 +730,8 @@ import {
         image.getDOM(),
         vdiv(
           title,
-          tag("tool", hdiv(...timeEls, spacer(), this.toggle.getDOM()))
-        )
+          tag("tool", hdiv(...timeEls, spacer(), this.toggle.getDOM())),
+        ),
       );
       this.dom.classList.add("trcklistelement");
     }
@@ -703,8 +755,8 @@ import {
             max: 1,
             step: 0.01,
             bind: at.ratio,
-          })
-        )
+          }),
+        ),
       );
     } else {
       return new WDetailLevel({
@@ -715,7 +767,7 @@ import {
             text: "enabled",
             bind: at.on,
           }),
-          wtext(at.name)
+          wtext(at.name),
         ),
         childrenGenerator: () => [
           whbar(),
@@ -745,8 +797,8 @@ import {
                     await child.on.set(false);
                   }
                 },
-              })
-            )
+              }),
+            ),
           ),
           ...at.children.map(settingsTree),
         ],
@@ -817,7 +869,7 @@ import {
           wimageLink(
             "logo.svg",
             "Bandhiking",
-            "https://gitlab.com/rendaw/bandhiking"
+            "https://gitlab.com/rendaw/bandhiking",
           ),
           new WTab({
             icon: "play.svg",
@@ -832,12 +884,12 @@ import {
                     tag: "info",
                     nodes: [
                       new WBindText("player;from", currentTrack, (t) =>
-                        t !== null ? "From: " + t[1] : ""
+                        t !== null ? "From: " + t[1] : "",
                       ),
                       new WBindText("player;location", currentTrack, (t) =>
                         t !== null && !settings.locationFilters[0].on.value()
                           ? t[0].track.location
-                          : ""
+                          : "",
                       ),
                     ],
                   }),
@@ -867,17 +919,17 @@ import {
                           boolean
                         > {
                           do(
-                            track: [HydratedTrack, string] | null
+                            track: [HydratedTrack, string] | null,
                           ): ChainAnchor<boolean> {
                             if (track === null)
                               return new ValueChainAnchor(false);
                             return track[0].star;
                           }
                         })("main;star", [currentTrack]),
-                      })
-                    )
-                  )
-                )
+                      }),
+                    ),
+                  ),
+                ),
               );
             },
           }),
@@ -942,17 +994,31 @@ import {
                                   text: "enabled",
                                   bind: location.on,
                                 }),
-                                wtext(location.name)
-                              )
-                            )
+                                wtext(location.name),
+                              ),
+                            ),
                           ),
                         ],
-                      })
-                    )
+                      }),
+                    ),
                   ),
                   wtag(
                     "postfilters",
                     wvbox(
+                      whbox(
+                        new WSlider({
+                          text: "Max song length",
+                          min: 1,
+                          max: 60,
+                          step: 1,
+                          bind: settings.maxSongLength,
+                        }),
+                        new WBindText(
+                          "maxlen-val",
+                          settings.maxSongLength,
+                          (v: number): string => (v === 0 ? "off" : `${v}m`),
+                        ),
+                      ),
                       wbutton({
                         text: "Download settings",
                         action: async () => {
@@ -965,7 +1031,7 @@ import {
                           a.href = URL.createObjectURL(
                             new Blob([JSON.stringify(data)], {
                               type: "text/json",
-                            })
+                            }),
                           );
                           a.download = `bandhiking_settings_${new Date().toISOString()}.bandhiking`;
                           a.click();
@@ -986,7 +1052,7 @@ import {
                             const reader = new FileReader();
                             reader.addEventListener("load", (e) => {
                               const settings = JSON.parse(
-                                e.target!.result! as string
+                                e.target!.result! as string,
                               );
                               localStorage.clear();
                               for (const key of Object.keys(settings)) {
@@ -1022,16 +1088,16 @@ import {
                         action: async () => {
                           settings.starEpoch.set(epoch);
                         },
-                      })
-                    )
-                  )
-                )
+                      }),
+                    ),
+                  ),
+                ),
               );
             },
           }),
         ],
-      })
-    )
+      }),
+    ),
   );
 
   await chainClean();
