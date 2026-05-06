@@ -631,8 +631,9 @@ dependencies = [
 
 [[package]]
 name = "good-ormning"
-version = "0.4.1"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e16075df702ca0b9bea6ee011af76195cc5453d422b8d6479a6a80d5a749ed3a"
 dependencies = [
  "async-trait",
  "chrono",
@@ -660,8 +661,9 @@ dependencies = [
 
 [[package]]
 name = "good-ormning-core"
-version = "0.1.0"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d7cb1e687fb8116d8c2e03d09da4080fd843635fe3e16b724189d4f69ce5b59"
 dependencies = [
  "async-trait",
  "chrono",
@@ -685,8 +687,9 @@ dependencies = [
 
 [[package]]
 name = "good-ormning-macros"
-version = "0.1.0"
-source = "git+https://github.com/andrewbaxter/good-ormning?branch=v0b#7bdacddf2f11a3c00af3ad54cca75128fe2223b9"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "122fbd91ecff5502eda77efdb06564e1e77c6e2e738867d3b1c7790154c15d4e"
 dependencies = [
  "convert_case 0.7.1",
  "good-ormning-core",

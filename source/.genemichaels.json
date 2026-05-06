@@ -1,0 +1,11 @@
+{
+	"import_normalization": "combine",
+	"external_formatters": {
+		"sql-formatter-sqlite": {
+			"commandline": ["sql-formatter", "--language", "sqlite"]
+		},
+		"sql-formatter-pg": {
+			"commandline": ["sql-formatter", "--language", "postgresql"]
+		}
+	}
+}

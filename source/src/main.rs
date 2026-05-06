@@ -203,37 +203,53 @@ async fn scrape_inner(log: &Log, state: &Arc<State>) {
         match spawn_blocking(move || {
             let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
             good_query!(
+                //# genemichaels-external: sql-formatter-sqlite
                 r#"delete from "genrerank"
-                        where ("genre", "secondary", "sort", "track") in (
-                            select "genre", "secondary", "sort", "track" from (
-                                select 
-                                    "genrerank"."genre" as "genre", 
-                                    "genrerank"."secondary" as "secondary", 
-                                    "genrerank"."sort" as "sort", 
-                                    "genrerank"."track" as "track", 
-                                    row_number()
-                                    over (
-                                        partition by 
-                                            "genrerank"."genre", 
-                                            "genrerank"."secondary", 
-                                            "genrerank"."sort", 
-                                            "track"."location" 
-                                        order by 
-                                            "genrerank"."date" desc, 
-                                            "genrerank"."rank" desc
-                                    )
-                                    as "rn"
-                                    from "genrerank"
-                                left join "track" on "genrerank"."track" = "track"."id"
-                            )
-                            where "rn" > ?1
-                        )
-                "#;
-                dbm::Db1(&mut *db),
-                p1: i64 = 5000i64
+                   where
+                     ("genre", "secondary", "sort", "track") in (
+                       select
+                         "genre",
+                         "secondary",
+                         "sort",
+                         "track"
+                       from
+                         (
+                           select
+                             "genrerank"."genre" as "genre",
+                             "genrerank"."secondary" as "secondary",
+                             "genrerank"."sort" as "sort",
+                             "genrerank"."track" as "track",
+                             row_number() over (
+                               partition by
+                                 "genrerank"."genre",
+                                 "genrerank"."secondary",
+                                 "genrerank"."sort",
+                                 "track"."location"
+                               order by
+                                 "genrerank"."date" desc,
+                                 "genrerank"."rank" desc
+                             ) as "rn"
+                           from
+                             "genrerank"
+                             left join "track" on "genrerank"."track" = "track"."id"
+                         )
+                       where
+                         "rn" > ${i64 = 5000i64}
+                     )
+                   "#;
+                dbm::Db1(&mut *db)
             ).context("Failed to delete pruned genrerank rows")?;
             good_query!(
-                r#"delete from "track" where "id" not in (select distinct "track" from "genrerank")"#;
+                //# genemichaels-external: sql-formatter-sqlite
+                r#"delete from "track"
+                   where
+                     "id" not in (
+                       select distinct
+                         "track"
+                       from
+                         "genrerank"
+                     )
+                   "#;
                 dbm::Db1(&mut *db)
             ).context("Failed to delete orphan tracks")?;
             return Ok(()) as Result<(), loga::Error>;
@@ -410,67 +426,55 @@ async fn rankpage(
         match spawn_blocking(move || {
             let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
             good_query!(
-                r#"
-                    insert into "track"
-                        (
-                            "id", 
-                            "art_id", 
-                            "featured_track_id", 
-                            "location_text", 
-                            "location", 
-                            "primary_text", 
-                            "secondary_text", 
-                            "type", 
-                            "url_hints_slug", 
-                            "url_hints_subdomain"
-                        )
-                        values (
-                            $id, 
-                            $art_id, 
-                            $featured_track_id, 
-                            $location_text, 
-                            $location, 
-                            $primary_text, 
-                            $secondary_text, 
-                            'a', 
-                            $url_hints_debug, 
-                            $url_hints_subdomain
-                        )
-                    on conflict do nothing
-                "#;
-                dbm::Db1(&mut *db),
-                id: i64 = track_id,
-                art_id: i64 = art_id,
-                featured_track_id: i64 = featured_track_id,
-                location_text: opt string = location_text.as_deref(),
-                location: i32 = location,
-                primary_text: string = & primary_text,
-                secondary_text: string = & secondary_text,
-                url_hints_debug: string = & url_hints_slug,
-                url_hints_subdomain: string = & url_hints_subdomain
+                //# genemichaels-external: sql-formatter-sqlite
+                r#"insert into
+                     "track" (
+                       "id",
+                       "art_id",
+                       "featured_track_id",
+                       "location_text",
+                       "location",
+                       "primary_text",
+                       "secondary_text",
+                       "type",
+                       "url_hints_slug",
+                       "url_hints_subdomain"
+                     )
+                   values
+                     (
+                       ${i64 = track_id},
+                       ${i64 = art_id},
+                       ${i64 = featured_track_id},
+                       ${opt string = location_text.as_deref()},
+                       ${i32 = location},
+                       ${string = & primary_text},
+                       ${string = & secondary_text},
+                       'a',
+                       ${string = & url_hints_slug},
+                       ${string = & url_hints_subdomain}
+                     )
+                   on conflict do nothing
+                   "#;
+                dbm::Db1(&mut *db)
             ).context("Failed to insert track")?;
             good_query!(
-                r#"
-                    insert into "genrerank"
-                        (
-                            "date", 
-                            "genre", 
-                            "secondary", 
-                            "sort", 
-                            "rank", 
-                            "track"
-                        )
-                        values (
-                            $date,
-                            $genre,
-                            $secondary,
-                            $sort,
-                            $rank,
-                            $track
-                        )
-                    on conflict ("genre", "secondary", "sort", "track")
-                        do update set "date" = $date, "rank" = $rank
-                "#;
+                //# genemichaels-external: sql-formatter-sqlite
+                r#"insert into
+                     "genrerank" (
+                       "date",
+                       "genre",
+                       "secondary",
+                       "sort",
+                       "rank",
+                       "track"
+                     )
+                   values
+                     ($date, $genre, $secondary, $sort, $rank, $track)
+                   on conflict ("genre", "secondary", "sort", "track") do update
+                   set
+                     "date" = $date,
+                     "rank" = $rank
+                   "#;
                 dbm::Db1(&mut *db),
                 date: i64 = date,
                 genre: string = & topcat2,
@@ -626,22 +630,22 @@ async fn main() {
             let rows = match spawn_blocking(move || {
                 let mut db = db.lock().map_err(|_| loga::err("DB mutex poisoned"))?;
                 let rows = good_ormning::sqlite::good_query_many!(
-                    r#"
-                        select 
-                            "genrerank"."sort" as "sort", 
-                            "genrerank"."genre" as "genre", 
-                            "genrerank"."secondary" as "secondary", 
-                            "track"."location" as "location", 
-                            count(1) as "count" 
-                        from "genrerank"
-                        inner join 
-                            "track" on "genrerank"."track" = "track"."id" 
-                        group by 
-                            "genrerank"."sort", 
-                            "genrerank"."genre", 
-                            "genrerank"."secondary", 
-                            "track"."location"
-                    "#;
+                    //# genemichaels-external: sql-formatter-sqlite
+                    r#"select
+                         "genrerank"."sort" as "sort",
+                         "genrerank"."genre" as "genre",
+                         "genrerank"."secondary" as "secondary",
+                         "track"."location" as "location",
+                         count(1) as "count"
+                       from
+                         "genrerank"
+                         inner join "track" on "genrerank"."track" = "track"."id"
+                       group by
+                         "genrerank"."sort",
+                         "genrerank"."genre",
+                         "genrerank"."secondary",
+                         "track"."location"
+                       "#;
                     dbm::Db1(&mut *db)
                 ).context("Count query failed")?;
                 return Ok(rows.into_iter().map(|row| CountRow {
@@ -780,46 +784,46 @@ async fn main() {
                 let tracks: Vec<TrackOut> = match (subcat, loc_ids) {
                     (None, None) => {
                         good_ormning::sqlite::good_query_many!(
-                            r#"
-                                select 
-                                    "id" as "id",
-                                    "art_id" as "art_id", 
-                                    "featured_track_id" as "featured_track_id", 
-                                    "location" as "location", 
-                                    "primary_text" as "primary_text", 
-                                    "secondary_text" as "secondary_text", 
-                                    "track_type" as "track_type", 
-                                    "url_hints_slug" as "url_hints_slug", 
-                                    "url_hints_subdomain" as "url_hints_subdomain"
-                                from (
-                                    select 
-                                        "track"."id" as "id", 
-                                        "track"."art_id" as "art_id", 
-                                        "track"."featured_track_id" as "featured_track_id", 
-                                        "track"."location" as "location", 
-                                        "track"."primary_text" as "primary_text", 
-                                        "track"."secondary_text" as "secondary_text", 
-                                        "track"."type" as "track_type", 
-                                        "track"."url_hints_slug" as "url_hints_slug", 
-                                        "track"."url_hints_subdomain" as "url_hints_subdomain", 
-                                        row_number()
-                                    over (
-                                        order by 
-                                            "genrerank"."date" desc, 
-                                            "genrerank"."rank" desc
-                                    ) as "rn"
-                                    from "genrerank"
-                                    inner join "track"
-                                        on "genrerank"."track" = "track"."id"
-                                    where "genrerank"."sort" = ?1 and "genrerank"."genre" = ?2
-                                ) as "rows"
-                                where "rn" > ?3 and "rn" <= ?4
-                            "#;
-                            dbm::Db1(&mut *db),
-                            p1: string = & sort,
-                            p2: string = & topcat,
-                            p3: i64 = offset,
-                            p4: i64 = offset + pagesize
+                            //# genemichaels-external: sql-formatter-sqlite
+                            r#"select
+                                 "id" as "id",
+                                 "art_id" as "art_id",
+                                 "featured_track_id" as "featured_track_id",
+                                 "location" as "location",
+                                 "primary_text" as "primary_text",
+                                 "secondary_text" as "secondary_text",
+                                 "track_type" as "track_type",
+                                 "url_hints_slug" as "url_hints_slug",
+                                 "url_hints_subdomain" as "url_hints_subdomain"
+                               from
+                                 (
+                                   select
+                                     "track"."id" as "id",
+                                     "track"."art_id" as "art_id",
+                                     "track"."featured_track_id" as "featured_track_id",
+                                     "track"."location" as "location",
+                                     "track"."primary_text" as "primary_text",
+                                     "track"."secondary_text" as "secondary_text",
+                                     "track"."type" as "track_type",
+                                     "track"."url_hints_slug" as "url_hints_slug",
+                                     "track"."url_hints_subdomain" as "url_hints_subdomain",
+                                     row_number() over (
+                                       order by
+                                         "genrerank"."date" desc,
+                                         "genrerank"."rank" desc
+                                     ) as "rn"
+                                   from
+                                     "genrerank"
+                                     inner join "track" on "genrerank"."track" = "track"."id"
+                                   where
+                                     "genrerank"."sort" = ${string = &sort}
+                                     and "genrerank"."genre" = ${string = &topcat}
+                                 ) as "rows"
+                               where
+                                 "rn" > ${i64 = offset}
+                                 and "rn" <= ${i64 = offset + pagesize}
+                               "#;
+                            dbm::Db1(&mut *db)
                         ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
@@ -837,52 +841,52 @@ async fn main() {
                     },
                     (None, Some(locs)) => {
                         good_ormning::sqlite::good_query_many!(
-                            r#"
-                                select 
-                                    "id" as "id", 
-                                    "art_id" as "art_id", 
-                                    "featured_track_id" as "featured_track_id", 
-                                    "location" as "location", 
-                                    "primary_text" as "primary_text", 
-                                    "secondary_text" as "secondary_text", 
-                                    "track_type" as "track_type", 
-                                    "url_hints_slug" as "url_hints_slug", 
-                                    "url_hints_subdomain" as "url_hints_subdomain" 
-                                from (
-                                    select 
-                                        "track"."id" as "id", 
-                                        "track"."art_id" as "art_id", 
-                                        "track"."featured_track_id" as "featured_track_id", 
-                                        "track"."location" as "location", 
-                                        "track"."primary_text" as "primary_text", 
-                                        "track"."secondary_text" as "secondary_text", 
-                                        "track"."type" as "track_type", 
-                                        "track"."url_hints_slug" as "url_hints_slug", 
-                                        "track"."url_hints_subdomain" as "url_hints_subdomain", 
-                                        row_number()
-                                    over (
-                                        order by 
-                                            "genrerank"."date" desc, 
-                                            "genrerank"."rank" desc
-                                        ) as "rn"
-                                    from "genrerank"
-                                    inner join "track"
-                                        on "genrerank"."track" = "track"."id"
-                                    where 
-                                        "genrerank"."sort" = $sort
-                                        and "genrerank"."genre" = $topcat
-                                        and "track"."location" in (
-                                            select value from rarray($loc)
-                                        )
-                                ) as "rows"
-                                where "rn" > $after and "rn" <= $until
-                            "#;
-                            dbm::Db1(&mut *db),
-                            sort: string = & sort,
-                            topcat: string = & topcat,
-                            loc: arr i32 = locs,
-                            after: i64 = offset,
-                            until: i64 = offset + pagesize
+                            //# genemichaels-external: sql-formatter-sqlite
+                            r#"select
+                                 "id" as "id",
+                                 "art_id" as "art_id",
+                                 "featured_track_id" as "featured_track_id",
+                                 "location" as "location",
+                                 "primary_text" as "primary_text",
+                                 "secondary_text" as "secondary_text",
+                                 "track_type" as "track_type",
+                                 "url_hints_slug" as "url_hints_slug",
+                                 "url_hints_subdomain" as "url_hints_subdomain"
+                               from
+                                 (
+                                   select
+                                     "track"."id" as "id",
+                                     "track"."art_id" as "art_id",
+                                     "track"."featured_track_id" as "featured_track_id",
+                                     "track"."location" as "location",
+                                     "track"."primary_text" as "primary_text",
+                                     "track"."secondary_text" as "secondary_text",
+                                     "track"."type" as "track_type",
+                                     "track"."url_hints_slug" as "url_hints_slug",
+                                     "track"."url_hints_subdomain" as "url_hints_subdomain",
+                                     row_number() over (
+                                       order by
+                                         "genrerank"."date" desc,
+                                         "genrerank"."rank" desc
+                                     ) as "rn"
+                                   from
+                                     "genrerank"
+                                     inner join "track" on "genrerank"."track" = "track"."id"
+                                   where
+                                     "genrerank"."sort" = ${string = &sort}
+                                     and "genrerank"."genre" = ${string = &topcat}
+                                     and "track"."location" in (
+                                       select
+                                         value
+                                       from
+                                         rarray (${arr i32 = locs})
+                                     )
+                                 ) as "rows"
+                               where
+                                 "rn" > ${i64 = offset}
+                                 and "rn" <= ${i64 = offset + pagesize}
+                               "#;
+                            dbm::Db1(&mut *db)
                         ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
@@ -900,48 +904,47 @@ async fn main() {
                     },
                     (Some(sub), None) => {
                         good_ormning::sqlite::good_query_many!(
-                            r#"
-                                select 
-                                    "id" as "id", 
-                                    "art_id" as "art_id", 
-                                    "featured_track_id" as "featured_track_id", 
-                                    "location" as "location", 
-                                    "primary_text" as "primary_text", 
-                                    "secondary_text" as "secondary_text", 
-                                    "track_type" as "track_type", 
-                                    "url_hints_slug" as "url_hints_slug", 
-                                    "url_hints_subdomain" as "url_hints_subdomain"
-                                from (
-                                    select 
-                                        "track"."id" as "id", 
-                                        "track"."art_id" as "art_id", 
-                                        "track"."featured_track_id" as "featured_track_id", 
-                                        "track"."location" as "location", 
-                                        "track"."primary_text" as "primary_text", 
-                                        "track"."secondary_text" as "secondary_text", 
-                                        "track"."type" as "track_type", 
-                                        "track"."url_hints_slug" as "url_hints_slug", 
-                                        "track"."url_hints_subdomain" as "url_hints_subdomain", 
-                                        row_number() over (
-                                            order by 
-                                                "genrerank"."date" desc, 
-                                                "genrerank"."rank" desc
-                                            ) as "rn" 
-                                        from "genrerank" 
-                                        inner join "track" 
-                                            on "genrerank"."track" = "track"."id" 
-                                        where 
-                                            "genrerank"."sort" = $sort
-                                            and "genrerank"."genre" = $topcat
-                                            and "genrerank"."secondary" = $sub
-                                ) as "rows" 
-                                where "rn" > $page_gt and "rn" <= $page_lte"#;
-                            dbm::Db1(&mut *db),
-                            sort: string = & sort,
-                            topcat: string = & topcat,
-                            sub: string = & sub,
-                            page_gt: i64 = offset,
-                            page_lte: i64 = offset + pagesize
+                            //# genemichaels-external: sql-formatter-sqlite
+                            r#"select
+                                 "id" as "id",
+                                 "art_id" as "art_id",
+                                 "featured_track_id" as "featured_track_id",
+                                 "location" as "location",
+                                 "primary_text" as "primary_text",
+                                 "secondary_text" as "secondary_text",
+                                 "track_type" as "track_type",
+                                 "url_hints_slug" as "url_hints_slug",
+                                 "url_hints_subdomain" as "url_hints_subdomain"
+                               from
+                                 (
+                                   select
+                                     "track"."id" as "id",
+                                     "track"."art_id" as "art_id",
+                                     "track"."featured_track_id" as "featured_track_id",
+                                     "track"."location" as "location",
+                                     "track"."primary_text" as "primary_text",
+                                     "track"."secondary_text" as "secondary_text",
+                                     "track"."type" as "track_type",
+                                     "track"."url_hints_slug" as "url_hints_slug",
+                                     "track"."url_hints_subdomain" as "url_hints_subdomain",
+                                     row_number() over (
+                                       order by
+                                         "genrerank"."date" desc,
+                                         "genrerank"."rank" desc
+                                     ) as "rn"
+                                   from
+                                     "genrerank"
+                                     inner join "track" on "genrerank"."track" = "track"."id"
+                                   where
+                                     "genrerank"."sort" = ${string = &sort}
+                                     and "genrerank"."genre" = ${string = &topcat}
+                                     and "genrerank"."secondary" = ${string = &sub}
+                                 ) as "rows"
+                               where
+                                 "rn" > ${i64 = offset}
+                                 and "rn" <= ${i64 = offset + pagesize}
+                               "#;
+                            dbm::Db1(&mut *db)
                         ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
@@ -959,54 +962,53 @@ async fn main() {
                     },
                     (Some(sub), Some(locs)) => {
                         good_ormning::sqlite::good_query_many!(
-                            r#"
-                                select 
-                                    "id" as "id", 
-                                    "art_id" as "art_id", 
-                                    "featured_track_id" as "featured_track_id", 
-                                    "location" as "location", 
-                                    "primary_text" as "primary_text", 
-                                    "secondary_text" as "secondary_text", 
-                                    "track_type" as "track_type", 
-                                    "url_hints_slug" as "url_hints_slug", 
-                                    "url_hints_subdomain" as "url_hints_subdomain" 
-                                from (
-                                    select "track"."id" as "id", 
-                                        "track"."art_id" as "art_id", 
-                                        "track"."featured_track_id" as "featured_track_id", 
-                                        "track"."location" as "location", 
-                                        "track"."primary_text" as "primary_text", 
-                                        "track"."secondary_text" as "secondary_text", 
-                                        "track"."type" as "track_type", 
-                                        "track"."url_hints_slug" as "url_hints_slug", 
-                                        "track"."url_hints_subdomain" as "url_hints_subdomain", 
-                                        row_number()
-                                    over (
-                                        order by 
-                                            "genrerank"."date" desc, 
-                                            "genrerank"."rank" desc
-                                    ) as "rn" 
-                                    from "genrerank" 
-                                    inner join "track" on "genrerank"."track" = "track"."id" 
-                                    where 
-                                        "genrerank"."sort" = $sort and 
-                                        "genrerank"."genre" = $genre and
-                                        "genrerank"."secondary" = $secondary and 
-                                        "track"."location" in (
-                                            select value from rarray($loc)
-                                        )
-                                ) as "rows" 
-                                where 
-                                    "rn" > $page_gt and 
-                                    "rn" <= $page_lte
-                                "#;
-                            dbm::Db1(&mut *db),
-                            sort: string = & sort,
-                            genre: string = & topcat,
-                            secondary: string = & sub,
-                            loc: arr i32 = locs,
-                            page_gt: i64 = offset,
-                            page_lte: i64 = offset + pagesize
+                            //# genemichaels-external: sql-formatter-sqlite
+                            r#"select
+                                 "id" as "id",
+                                 "art_id" as "art_id",
+                                 "featured_track_id" as "featured_track_id",
+                                 "location" as "location",
+                                 "primary_text" as "primary_text",
+                                 "secondary_text" as "secondary_text",
+                                 "track_type" as "track_type",
+                                 "url_hints_slug" as "url_hints_slug",
+                                 "url_hints_subdomain" as "url_hints_subdomain"
+                               from
+                                 (
+                                   select
+                                     "track"."id" as "id",
+                                     "track"."art_id" as "art_id",
+                                     "track"."featured_track_id" as "featured_track_id",
+                                     "track"."location" as "location",
+                                     "track"."primary_text" as "primary_text",
+                                     "track"."secondary_text" as "secondary_text",
+                                     "track"."type" as "track_type",
+                                     "track"."url_hints_slug" as "url_hints_slug",
+                                     "track"."url_hints_subdomain" as "url_hints_subdomain",
+                                     row_number() over (
+                                       order by
+                                         "genrerank"."date" desc,
+                                         "genrerank"."rank" desc
+                                     ) as "rn"
+                                   from
+                                     "genrerank"
+                                     inner join "track" on "genrerank"."track" = "track"."id"
+                                   where
+                                     "genrerank"."sort" = ${string = &sort}
+                                     and "genrerank"."genre" = ${string = &topcat}
+                                     and "genrerank"."secondary" = ${string = &sub}
+                                     and "track"."location" in (
+                                       select
+                                         value
+                                       from
+                                         rarray (${arr i32 = locs})
+                                     )
+                                 ) as "rows"
+                               where
+                                 "rn" > ${i64 = offset}
+                                 and "rn" <= ${i64 = offset + pagesize}
+                               "#;
+                            dbm::Db1(&mut *db)
                         ).context("DB query failed")?.into_iter().map(|row| {
                             row_to_track_out(
                                 row.id,
